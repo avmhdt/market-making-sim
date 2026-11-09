@@ -2,7 +2,7 @@
 
 > Optimal quoting under inventory risk, tested on replayed order books, with P&L broken down to its sources.
 
-**Status:** planning
+**Status:** in progress (M1 of 7: scaffolding, contracts and data access)
 
 | | |
 |---|---|

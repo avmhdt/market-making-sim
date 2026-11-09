@@ -1,0 +1,19 @@
+# Avellaneda and Stoikov (2008), section 4 simulation: s0 = 100, T = 1, sigma = 2,
+# dt = 0.005, A = 140, k = 1.5. One model time unit is mapped to one second.
+# The binomial step sigma*sqrt(dt) = 0.141421... is rounded to 1414 ticks of 1e-4
+# (relative error 1.5e-4 in sigma); see docs/decisions.md.
+venue: synthetic
+symbol: SYN
+start_utc: 2026-01-01T00:00:00Z
+time_unit_ns: 1000000000
+horizon: 1.0
+dt: 0.005
+tick_size: 0.0001
+lot_size: 1.0
+mid: {kind: binomial_grid, s0: 100.0, sigma: 2.0}
+market_orders: {A: 140.0, k: 1.5, qty_lots: 1}
+book: {levels: 5, half_spread_ticks: 1, level_lots: 10}
+feed_latency_ns: 0
+feed_jitter_ns: 0
+seed: 2008
+paths: 1000

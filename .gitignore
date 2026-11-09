@@ -40,3 +40,11 @@ Thumbs.db
 
 # Local build spec (kept out of the public repo)
 SPEC.html
+
+# Run outputs (results/runs and results/rl are symlinks to $DATA_ROOT on WSL)
+results/runs/
+results/rl/
+reports/**/*.html
+*.lock
+!uv.lock
+.coverage*

@@ -1,0 +1,57 @@
+# Defaults shared by every run (spec section 10). Strategy configs are merged over this.
+run:
+  name: base
+  seed: 0
+  sim: fallback                 # fallback | edbt
+  results_dir: ${MMS_RESULTS_DIR}
+data:
+  source: cla                   # cla | synthetic | lobster | tardis
+  venue: binance-usdm
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT]   # D-04 default
+  start: null
+  end: null                     # inclusive, UTC days
+  book_depth: 10
+  respect_gap_log: true
+  instruments: configs/instruments.yaml
+fees:
+  schedule: configs/fees.yaml
+  tier: retail                  # retail | mid | zero | rebate (D-10)
+  funding: true
+sim:
+  queue_model: {kind: prob, power: 2.0}       # front | conservative | prob
+  latency:
+    feed:  {kind: recorded, extra_ns: 0}      # recorded | constant
+    order: {kind: median_feed}                # median_feed | constant | empirical (D-09)
+    ack:   {kind: median_feed}
+    added_rtt_ns: 0
+  post_only: true
+calibration:
+  window_s: 600
+  refit_every_s: 60
+  depth_grid_ticks: {min: 1, max: 20}
+  sigma_sample_ms: 1000
+  min_trades: 200
+  min_r2: 0.8
+strategy:
+  family: glft                  # as | glft | glft_exact | rl
+  gamma: 0.05
+  horizon_s: 3600
+  quote_lots: auto              # D-08: smallest lot multiple with notional >= 1,000 USD
+  q_max_units: 10
+  decision_interval_ms: 100     # D-07
+  requote_threshold_ticks: 1
+  signal:
+    enabled: false
+    model_dir: null
+    mode: reservation_shift
+    alpha: 0.5
+    pull_threshold_ticks: null
+    compute_latency_us: 200
+analysis:
+  markout_horizons_ms: [100, 500, 1000, 5000, 10000, 30000, 60000]
+  headline_horizon_ms: 5000     # D-05
+  bootstrap: {n: 5000, block: day, alpha: 0.05}
+  capital_usd: 10000            # D-11
+  return_freq: 1h
+explog:
+  path: results/trial_log.csv
