@@ -1,5 +1,5 @@
 # Data: never commit raw or licensed data
-data/
+/data/
 *.parquet
 *.feather
 *.h5
