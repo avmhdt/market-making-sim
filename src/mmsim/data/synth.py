@@ -28,7 +28,14 @@ from mmsim.config import SynthConfig
 from mmsim.io.parquet import write_canonical
 from mmsim.sim.types import InstrumentSpec
 
-__all__ = ["NS_PER_DAY", "SynthWorld", "generate", "generate_path", "synth_instrument", "write_world"]
+__all__ = [
+    "NS_PER_DAY",
+    "SynthWorld",
+    "generate",
+    "generate_path",
+    "synth_instrument",
+    "write_world",
+]
 
 NS_PER_DAY = 86_400_000_000_000
 BATCH_ID_STRIDE = 1_000_000_000

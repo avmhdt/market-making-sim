@@ -55,7 +55,9 @@ class FeeRow:
 
     def covers(self, day: date) -> bool:
         """True if this row applies on ``day`` (``effective_to`` inclusive)."""
-        return self.effective_from <= day and (self.effective_to is None or day <= self.effective_to)
+        return self.effective_from <= day and (
+            self.effective_to is None or day <= self.effective_to
+        )
 
 
 def _as_date(value: object) -> date:

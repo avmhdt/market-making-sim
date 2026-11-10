@@ -203,10 +203,9 @@ def trade_rows(
             continue
         frame = pl.from_arrow(chunk)
         assert isinstance(frame, pl.DataFrame)
-        frame = (
-            frame.with_columns(_trade_id_key(frame.get_column("trade_id").cast(pl.String)).alias("_k"))
-            .sort(["ts_recv", "_k"], maintain_order=True)
-        )
+        frame = frame.with_columns(
+            _trade_id_key(frame.get_column("trade_id").cast(pl.String)).alias("_k")
+        ).sort(["ts_recv", "_k"], maintain_order=True)
         first = int(frame["ts_recv"][0])
         if last_recv is not None and first < last_recv:
             raise ReplayOrderError(f"trades ts_recv {first} after {last_recv}")

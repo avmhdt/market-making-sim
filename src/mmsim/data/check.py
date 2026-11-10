@@ -84,7 +84,9 @@ class CheckReport:
         return out
 
 
-def _footer(files: list[Path], dataset: str, problems: list[str]) -> tuple[int, int | None, int | None]:
+def _footer(
+    files: list[Path], dataset: str, problems: list[str]
+) -> tuple[int, int | None, int | None]:
     rows = 0
     lo: int | None = None
     hi: int | None = None
@@ -167,8 +169,10 @@ def run_check(
                 today = gaps.filter((pl.col("end_ns") > lo) & (pl.col("start_ns") < hi))
                 clipped = today.with_columns(
                     (
-                        (pl.min_horizontal(pl.col("end_ns"), pl.lit(hi))
-                         - pl.max_horizontal(pl.col("start_ns"), pl.lit(lo)))
+                        (
+                            pl.min_horizontal(pl.col("end_ns"), pl.lit(hi))
+                            - pl.max_horizontal(pl.col("start_ns"), pl.lit(lo))
+                        )
                         / NS_PER_S
                     ).alias("_s")
                 )
