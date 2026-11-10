@@ -50,7 +50,14 @@ from mmsim.sim.types import InstrumentSpec, Side
 from mmsim.strategy.analytic import SymmetricPolicy
 from mmsim.strategy.base import QuotePolicy
 
-__all__ = ["Check", "ValidationPaths", "run_validation", "write_report"]
+__all__ = [
+    "Check",
+    "ValidationPaths",
+    "load_exceptions",
+    "run_validation",
+    "unexplained_failures",
+    "write_report",
+]
 
 FAMILY = "synthetic_validation"
 NS = 1_000_000_000
@@ -70,6 +77,37 @@ class Check:
     tolerance: str
     passed: bool
     note: str = ""
+
+
+ExceptionKey = tuple[str, str, str]
+
+
+def load_exceptions(repo_root: Path) -> dict[ExceptionKey, str]:
+    """Owner-accepted misses: ``(check, case, metric) -> decision id``."""
+    path = repo_root / "configs" / "synthetic" / "documented_exceptions.yaml"
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {
+        (str(e["check"]), str(e["case"]), str(e["metric"])): str(e["decision"])
+        for e in raw.get("exceptions", [])
+    }
+
+
+def mark_exceptions(checks: list[Check], exceptions: dict[ExceptionKey, str]) -> list[Check]:
+    """Failed rows that are documented exceptions get a note naming the decision."""
+    out: list[Check] = []
+    for c in checks:
+        decision = exceptions.get((c.check, c.case, c.metric))
+        if not c.passed and decision is not None:
+            c = Check(**{**asdict(c), "note": f"documented exception ({decision})"})
+        out.append(c)
+    return out
+
+
+def unexplained_failures(checks: list[Check], exceptions: dict[ExceptionKey, str]) -> list[Check]:
+    """Failed rows that are not documented exceptions; any of these fails the run."""
+    return [c for c in checks if not c.passed and (c.check, c.case, c.metric) not in exceptions]
 
 
 @dataclass(frozen=True)
@@ -299,8 +337,8 @@ def _population_rows(
         se_pub = sd / math.sqrt(n_pub if metric.startswith("mean") else 2 * n_pub)
         z_pub = (pub[key] - value) / se_pub
         rows.append(Check("AC-W-02 diagnostic", f"{case} reference 50k", metric, value, pub[key],
-                          se_pub, z_pub, "reported: z of the published value", True,
-                          "not a pass/fail row"))  # fmt: skip
+                          se_pub, z_pub, "reported, post hoc: z of the published value", True,
+                          "post hoc diagnostic, not a pass/fail row"))  # fmt: skip
     return rows
 
 
@@ -520,7 +558,14 @@ def run_validation(
     ce_checks, fig_ce = check_glft_ce(paths, fast)
     checks += ce_checks
     checks += check_asymptotic()
+    checks = mark_exceptions(checks, load_exceptions(paths.repo_root))
     return checks, {"intensity": fig_int, "as2008": fig_as, "glft_ce": fig_ce}
+
+
+def _verdict(c: Check) -> str:
+    if c.passed:
+        return "yes"
+    return f"NO, {c.note}" if c.note.startswith("documented exception") else "NO"
 
 
 def write_report(checks: list[Check], figure: dict[str, Any], reports_dir: Path) -> None:
@@ -538,7 +583,7 @@ def write_report(checks: list[Check], figure: dict[str, Any], reports_dir: Path)
         z = "" if c.z is None else f"{c.z:.2f}"
         lines.append(
             f"| {c.check} | {c.case} | {c.metric} | {c.value:.6g} | {c.target:.6g} | {se} | {z} "
-            f"| {c.tolerance} | {'yes' if c.passed else 'NO'} |"
+            f"| {c.tolerance} | {_verdict(c)} |"
         )
     (tables / "synthetic_validation.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8", newline=LF

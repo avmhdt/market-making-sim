@@ -1,0 +1,7 @@
+# Validation misses the owner accepted as documented exceptions (docs/decisions.md M2-20).
+# `mms validate synthetic` still reports these rows as failed; it exits non-zero only on a
+# failed row that is not listed here. Thresholds and seeds are unchanged.
+exceptions:
+  - {check: AC-W-02, case: gamma=0.1 symmetric reference, metric: std_profit, decision: M2-20}
+  - {check: AC-W-02, case: gamma=0.01 symmetric reference, metric: std_profit, decision: M2-20}
+  - {check: AC-W-02, case: gamma=1 symmetric reference, metric: std_final_q, decision: M2-20}
