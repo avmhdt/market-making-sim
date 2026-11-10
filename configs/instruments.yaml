@@ -1,0 +1,9 @@
+# Contract facts per venue symbol. Fees live in fees.yaml by tier and effective date.
+# Binance USD-M values are those crypto-lob-alpha recorded from
+# https://fapi.binance.com/fapi/v1/exchangeInfo on 2026-11-01 (its config/instruments.yaml).
+instruments:
+  - {venue: binance-usdm, symbol: BTCUSDT, tick_size: 0.1, lot_size: 0.001, contract_type: perp}
+  - {venue: binance-usdm, symbol: ETHUSDT, tick_size: 0.01, lot_size: 0.001, contract_type: perp}
+  - {venue: binance-usdm, symbol: SOLUSDT, tick_size: 0.01, lot_size: 0.01, contract_type: perp}
+  # Synthetic fixture day (tests/fixtures/mini_day).
+  - {venue: synthetic, symbol: SYNUSDT, tick_size: 0.1, lot_size: 0.001, contract_type: perp}

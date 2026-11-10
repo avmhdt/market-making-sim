@@ -1,0 +1,16 @@
+# Fee schedule by venue, tier and effective date (FR-08, DQ-08, D-10).
+# bps of notional; negative maker_bps is a rebate. effective_to is inclusive; null = open.
+#
+# retail: Binance USD-M VIP 0 regular-user rates as read by crypto-lob-alpha from
+#   https://www.binance.com/en/fee/futureFee on 2026-11-01 (maker 0.0200%, taker 0.0500%).
+#   Owner confirmation pending (P-13, before M5).
+# mid, zero, rebate: hypothetical maker scenarios from D-10, labelled as such; taker is the
+#   schedule value.
+schedules:
+  - {venue: binance-usdm, tier: retail, maker_bps: 2.0, taker_bps: 5.0, effective_from: 2026-11-01, effective_to: null, hypothetical: false, owner_confirmed: false}
+  - {venue: binance-usdm, tier: mid, maker_bps: 1.0, taker_bps: 5.0, effective_from: 2026-11-01, effective_to: null, hypothetical: true}
+  - {venue: binance-usdm, tier: zero, maker_bps: 0.0, taker_bps: 5.0, effective_from: 2026-11-01, effective_to: null, hypothetical: true}
+  - {venue: binance-usdm, tier: rebate, maker_bps: -0.5, taker_bps: 5.0, effective_from: 2026-11-01, effective_to: null, hypothetical: true}
+  # Synthetic worlds: fee-free unless a test sets a tier explicitly.
+  - {venue: synthetic, tier: retail, maker_bps: 0.0, taker_bps: 0.0, effective_from: 2000-01-01, effective_to: null, hypothetical: true}
+  - {venue: synthetic, tier: zero, maker_bps: 0.0, taker_bps: 0.0, effective_from: 2000-01-01, effective_to: null, hypothetical: true}
