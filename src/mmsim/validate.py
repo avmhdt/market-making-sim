@@ -272,6 +272,38 @@ def _stat_checks(
     return out
 
 
+POPULATION_PATHS = 50_000
+
+
+def _population_rows(
+    paths: ValidationPaths,
+    case: str, gamma: float, strategy: Literal["inventory", "symmetric"], seed: int,
+    sym_spread: float, pub: dict[str, float], n_pub: int,
+) -> list[Check]:  # fmt: skip
+    """Reported only: a 50,000-path reference estimate, and how far the published value is
+    from it in units of the published sample's own standard error (n = 1,000)."""
+    big = as2008_mc(gamma, strategy=strategy, n_paths=POPULATION_PATHS, seed=seed + 100_000,
+                    symmetric_spread=sym_spread)  # fmt: skip
+    _log_series(paths, {"check": "as2008_population", "backend": "reference", "gamma": gamma,
+                        "strategy": strategy, "paths": POPULATION_PATHS, "seed": seed + 100_000},
+                big.profit, date(2030, 1, 1))  # fmt: skip
+    rows: list[Check] = []
+    for metric, sample, key in (
+        ("mean_profit", big.profit, "profit"),
+        ("std_profit", big.profit, "std_profit"),
+        ("mean_final_q", big.final_q, "final_q"),
+        ("std_final_q", big.final_q, "std_final_q"),
+    ):
+        sd = float(np.std(sample, ddof=1))
+        value = float(np.mean(sample)) if metric.startswith("mean") else sd
+        se_pub = sd / math.sqrt(n_pub if metric.startswith("mean") else 2 * n_pub)
+        z_pub = (pub[key] - value) / se_pub
+        rows.append(Check("AC-W-02 diagnostic", f"{case} reference 50k", metric, value, pub[key],
+                          se_pub, z_pub, "reported: z of the published value", True,
+                          "not a pass/fail row"))  # fmt: skip
+    return rows
+
+
 def check_as2008(
     paths: ValidationPaths, fast: bool, settings: Settings
 ) -> tuple[list[Check], dict[str, Any]]:
@@ -305,6 +337,10 @@ def check_as2008(
             checks += _stat_checks("AC-W-02", f"{case} reference", ref.profit, ref.final_q, pub)
             checks.append(Check("AC-W-02", f"{case} reference", "avg_spread", ref.avg_spread,
                                 pub["spread"], None, None, "reported", True))  # fmt: skip
+            if not fast:
+                checks += _population_rows(
+                    paths, case, gamma, strategy, seed, sym_spread, pub, n_ref
+                )
             cfg = _synth_run_cfg(
                 synth_rel, paths=n_sim, family="as", gamma=gamma,
                 params={"A": setup["A"], "k": setup["k"], "sigma": setup["sigma"]},
