@@ -1,0 +1,17 @@
+# Fixture run (integration, determinism and golden tests): GLFT on the mini_day fixture
+# read from canonical partitions under MMS_DATA_ROOT/processed.
+run: {name: mini_day_glft, seed: 3, results_dir: "${MMS_RESULTS_DIR}"}
+data: {source: synthetic, venue: synthetic, symbols: [SYNUSDT], start: 2026-01-05, end: 2026-01-05}
+fees: {tier: retail}
+sim:
+  queue_model: {kind: prob, power: 2.0}
+  latency: {feed: {kind: recorded}, order: {kind: median_feed}, ack: {kind: median_feed}}
+strategy:
+  family: glft
+  gamma: 0.01
+  horizon_s: 3600
+  quote_lots: 5
+  q_max_units: 4
+  decision_interval_ms: 100
+  requote_threshold_ticks: 1
+  params: {A: 2.0, k: 2.0, sigma: 0.2}

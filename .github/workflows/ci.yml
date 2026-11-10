@@ -60,6 +60,22 @@ jobs:
           uv run pytest -m "not slow and not data and not edbt and not signal" -n auto
           --cov=mmsim --cov-report=term --cov-fail-under=85
 
+  validate-fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --frozen --all-extras
+      - name: Synthetic validation, fast subset (FR-19)
+        env:
+          MMS_RESULTS_DIR: ${{ runner.temp }}/results
+          MMS_REPORTS_DIR: ${{ runner.temp }}/reports
+        run: uv run mms validate synthetic --fast
+
   trial-log:
     runs-on: ubuntu-latest
     timeout-minutes: 10

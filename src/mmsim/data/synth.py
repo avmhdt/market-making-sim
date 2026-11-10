@@ -128,13 +128,19 @@ def generate_path(cfg: SynthConfig, path_index: int = 0) -> SynthWorld:
     end_ns = start_ns + round(cfg.horizon * cfg.time_unit_ns)
     mid_times, mid_ticks = _mid_path(cfg, mid_rng, start_ns)
 
-    # Market orders: Poisson arrivals on (0, horizon), depth D ~ Exp(k).
+    # Market orders: Poisson or per-step Bernoulli arrivals, depth D ~ Exp(k).
     trade_t: list[Int64Array] = []
     trade_px: list[Int64Array] = []
     trade_side: list[npt.NDArray[np.int8]] = []
     for side, rng in ((1, buy_rng), (-1, sell_rng)):
-        count = int(rng.poisson(cfg.market_orders.A * cfg.horizon))
-        t = np.sort(rng.uniform(0.0, cfg.horizon, size=count))
+        if cfg.market_orders.arrivals == "poisson":
+            count = int(rng.poisson(cfg.market_orders.A * cfg.horizon))
+            t = np.sort(rng.uniform(0.0, cfg.horizon, size=count)).astype(np.float64)
+        else:
+            steps = round(cfg.horizon / cfg.dt)
+            hit = rng.random(steps) < cfg.market_orders.A * cfg.dt
+            t = (np.flatnonzero(hit).astype(np.float64) + 0.5) * cfg.dt
+            count = t.size
         depth = rng.exponential(1.0 / cfg.market_orders.k, size=count)
         ts = np.maximum(_to_ns(start_ns, t, cfg.time_unit_ns), start_ns + 1)
         # Trades sort before book changes at equal time, so they see the earlier mid.

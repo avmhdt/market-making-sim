@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-settings>=2.4",
     "pyyaml>=6.0",
     "structlog>=24.1",
+    "matplotlib>=3.9",
 ]
 
 # Extras named by the spec (section 4). Their contents are filled in by the milestone that

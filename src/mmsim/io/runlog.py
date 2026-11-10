@@ -21,8 +21,10 @@ import yaml
 from mmsim.explog import new_run_id
 from mmsim.io.parquet import write_parquet
 
-__all__ = ["METRICS_SCHEMA", "RUNTIME_FIELDS", "RunDir", "normalized_metrics"]
+__all__ = ["LF", "METRICS_SCHEMA", "RUNTIME_FIELDS", "RunDir", "normalized_metrics"]
 
+LF = "\n"
+"""Line ending for every text output, so files match across operating systems."""
 METRICS_SCHEMA = "mms.metrics/1"
 RUNTIME_FIELDS = frozenset({"runtime_s", "events_per_s", "finished_utc", "package_versions"})
 """Fields excluded from determinism comparisons (NFR-03)."""
@@ -52,7 +54,7 @@ class RunDir:
         """Write ``config.resolved.yaml`` with the env-derived settings (already redacted)."""
         target = self.path / "config.resolved.yaml"
         payload = {"config": resolved, "settings": settings}
-        target.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
+        target.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8", newline=LF)
         return target
 
     def write_metrics(self, metrics: dict[str, Any]) -> Path:
@@ -60,7 +62,9 @@ class RunDir:
         target = self.path / "metrics.json"
         body = {"schema": METRICS_SCHEMA, **metrics}
         target.write_text(
-            json.dumps(body, sort_keys=True, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+            json.dumps(body, sort_keys=True, indent=2, allow_nan=False) + LF,
+            encoding="utf-8",
+            newline=LF,
         )
         return target
 

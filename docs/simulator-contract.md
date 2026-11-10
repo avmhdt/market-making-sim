@@ -1,6 +1,6 @@
 # Simulator contract
 
-First draft (M1). The types live in `src/mmsim/sim/types.py` and the Protocols in `src/mmsim/sim/protocol.py`; both follow spec section 10 literally. M2 adds the fallback simulator's exact semantics and the contract test suite (`tests/contract/test_simulator_contract.py`), M6 the edbt mapping.
+The types live in `src/mmsim/sim/types.py` and the Protocols in `src/mmsim/sim/protocol.py`; both follow spec section 10 literally. The fallback simulator (`src/mmsim/sim/fallback.py`, M2) is the reference implementation; `tests/contract/test_simulator_contract.py` runs the contract against every available implementation (AC-W-08). The edbt mapping arrives with M6.
 
 ## Who imports what
 
@@ -28,11 +28,26 @@ The replay (`mmsim.data.replay`) feeds every backend the same stream:
 
 On a sequence gap the simulator cancels every resting quote, stops quoting until the next snapshot, and excludes the interval from markouts (DQ-03, M3).
 
+## One timeline
+
+The fallback keeps a single timeline. Market events happen at their matching time. The strategy sees them at `max(matching time, ts_exchange + feed delay)`. Its orders and cancels reach the exchange `order_delay` after the decision, and exchange-side order events (acks, fills) reach it `ack_delay` later. At equal times the order is: market event, order or cancel arrival, strategy-visible delivery, timer. Everything visible at the same time comes back as one `StepResult`, so a book change and a timer at the same instant give one decision on the new book.
+
+The runner decides on every timer tick (D-07, 100 ms) and on every own fill; it never reacts to bare acks, so zero-latency acks cannot loop. `step()` returns `None` once the market data is exhausted and only timers remain.
+
 ## Orders
 
 - Quotes are post-only (`TimeInForce.GTX`). A post-only order that would cross on arrival is rejected, never converted to a taker order (DQ-11).
 - `submit_limit_ticks` returns the client order id at once; the order reaches the exchange after the order latency and its acceptance is seen after the ack latency.
 - `open_orders` and `position_lots` reflect only what the strategy has seen.
+
+## Matching
+
+Resting quotes fill only against public trades, never against book changes alone:
+
+- A trade priced through our price (a sell below our bid, a buy above our ask) fills the whole remaining quantity, because the sweep emptied our level.
+- A trade at our price goes through the queue model: it consumes the queue ahead first, and what is left fills us.
+- Trades with side 0 (unknown aggressor) never fill quotes and are counted.
+- A crossed or locked reconstructed book is counted and not shown to the strategy (DQ-04); excluding a day above 0.01% crossed events is an M3 data rule.
 
 ## Fills
 

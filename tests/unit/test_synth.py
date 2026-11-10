@@ -4,7 +4,6 @@ import math
 from pathlib import Path
 
 import numpy as np
-import polars as pl
 import pytest
 
 from conftest import FIXTURES, REPO, read_fixture
@@ -127,9 +126,10 @@ def test_write_world_partitions_and_refuses_overwrite(tmp_path: Path) -> None:
 
 def test_generator_rejects_impossible_configs() -> None:
     with pytest.raises(ValueError, match="whole number"):
-        generate_path(load_synth_config(AS2008, ["dt=0.3"]), 0)
+        generate_path(load_synth_config(AS2008, ["dt=0.3", "market_orders.arrivals=poisson"]), 0)
     with pytest.raises(ValueError, match="below one tick"):
         generate_path(load_synth_config(AS2008, ["tick_size=1.0"]), 0)
     with pytest.raises(ValueError, match="one UTC day"):
         generate_path(load_synth_config(AS2008, ["time_unit_ns=100000000000000"]), 0)
-    assert pl.DataFrame().is_empty()
+    with pytest.raises(ValueError, match=r"A \* dt"):
+        load_synth_config(AS2008, ["dt=0.3"])
