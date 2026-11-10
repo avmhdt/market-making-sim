@@ -103,7 +103,10 @@ def git_sha(log_path: Path) -> str:
         sha = git("rev-parse", "HEAD").strip()
         root = Path(git("rev-parse", "--show-toplevel").strip())
         rel = log_path.resolve().relative_to(root.resolve()).as_posix()
-        status = git("status", "--porcelain", "--untracked-files=no", "--", ".", f":(exclude){rel}")
+        # Pathspecs anchored at the repository top: git runs inside the log's folder.
+        status = git(
+            "status", "--porcelain", "--untracked-files=no", "--", ":(top)", f":(top,exclude){rel}"
+        )
     except (OSError, ValueError, subprocess.CalledProcessError):
         return "0" * 40 + "-dirty"
     return f"{sha}-dirty" if status.strip() else sha

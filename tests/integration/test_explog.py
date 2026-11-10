@@ -209,3 +209,26 @@ def test_normalized_metrics_drop_runtime_fields(tmp_path: Path) -> None:
     assert normalized_metrics(path) == {"schema": "mms.metrics/1", "total": 1.5}
     cfg_path = run.write_config({"run": {"seed": 1}}, {"TARDIS_API_KEY": "**redacted**"})
     assert "redacted" in cfg_path.read_text(encoding="utf-8")
+
+
+def test_log_changes_do_not_mark_later_rows_dirty(tmp_path: Path) -> None:
+    import subprocess
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (tmp_path / "results").mkdir()
+    (tmp_path / "code.py").write_text("x = 1\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "init")
+    log = tmp_path / "results" / "trial_log.csv"
+    first = append_failed(log, run_id=new_run_id(), strategy_family="glft", params={})
+    second = append_failed(log, run_id=new_run_id(), strategy_family="glft", params={})
+    assert not first["git_sha"].endswith("-dirty")
+    assert not second["git_sha"].endswith("-dirty")
+    (tmp_path / "code.py").write_text("x = 2\n", encoding="utf-8")
+    third = append_failed(log, run_id=new_run_id(), strategy_family="glft", params={})
+    assert third["git_sha"].endswith("-dirty")
