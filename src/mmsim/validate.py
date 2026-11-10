@@ -363,7 +363,11 @@ def check_as2008(
             )  # fmt: skip
             profit, final_q = _profit_and_q(outcome)
             checks += _stat_checks("AC-W-02", f"{case} fallback", profit, final_q, pub)
-            figure[case] = {"reference": ref.profit.tolist(), "fallback": profit.tolist()}
+            figure[case] = {
+                "reference": ref.profit.tolist(),
+                "fallback": profit.tolist(),
+                "published": pub["profit"],
+            }
             if gamma == 0.1 and strategy == "inventory":
                 diff = float(profit.mean() - ref.profit.mean())
                 se = math.sqrt(profit.var(ddof=1) / profit.size
@@ -565,13 +569,20 @@ def _figure(data: dict[str, Any], path: Path) -> None:
     cases = list(data["as2008"])
     ref = [np.mean(data["as2008"][c]["reference"]) for c in cases]
     sim = [np.mean(data["as2008"][c]["fallback"]) for c in cases]
+    pub = [data["as2008"][c]["published"] for c in cases]
     x = np.arange(len(cases))
     ax.bar(x - 0.2, ref, 0.4, label="NumPy reference", color="#1f77b4")
     ax.bar(x + 0.2, sim, 0.4, label="event-driven fallback", color="#ff7f0e")
-    ax.set_xticks(x, [c.replace(" ", "\n") for c in cases], fontsize=8)
-    ax.set_ylabel("mean profit")
+    ax.scatter(x, pub, color="black", marker="_", s=300, linewidths=2, label="published", zorder=3)
+    labels = [
+        c.replace("gamma=", "γ=").replace(" inventory", "\ninv.").replace(" symmetric", "\nsym.")
+        for c in cases
+    ]
+    ax.set_xticks(x, labels, fontsize=8)
+    ax.set_ylabel("mean profit (1,000 paths)")
+    ax.set_ylim(0, max(max(ref), max(sim)) * 1.35)
     ax.set_title("A-S 2008 Tables 1-3 (AC-W-02)")
-    ax.legend()
+    ax.legend(loc="upper center", ncol=3, fontsize=7)
     ax = axes[2]
     ce = data["glft_ce"]
     ax.scatter([c["ce"] for c in ce], [c["ce_mc"] for c in ce], color="#2ca02c")
