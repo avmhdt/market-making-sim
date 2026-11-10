@@ -91,7 +91,7 @@ def as2008_mc(
         hit_b = rng.random(n_paths) < pb
         x += np.where(hit_a, ask, 0.0) - np.where(hit_b, bid, 0.0)
         q += hit_b.astype(np.float64) - hit_a.astype(np.float64)
-        fills += hit_a + hit_b
+        fills += hit_a.astype(np.float64) + hit_b.astype(np.float64)
         s += np.where(rng.random(n_paths) < 0.5, 1.0, -1.0) * sigma * math.sqrt(dt)
     return MCResult(profit=x + q * s, final_q=q, avg_spread=float(spreads.mean()), fills=fills)
 

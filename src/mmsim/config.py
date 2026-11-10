@@ -238,8 +238,9 @@ class MarketOrderConfig(_Model):
 
     ``poisson``: a Poisson process of rate ``A`` per side (FR-05). ``bernoulli_step``: the
     discrete procedure of Avellaneda and Stoikov (2008, section 3.3); in each ``dt`` step
-    each side gets one order with probability ``A * dt``, half-way through the step, so a
-    quote at distance ``delta >= 0`` fills with probability ``A exp(-k delta) dt``.
+    each side gets one order half-way through the step, with depth ``Exp(k) - c`` and
+    ``c = ln(1 / (A dt)) / k``, so a quote at any distance ``delta`` (negative too) fills
+    with probability ``min(1, A exp(-k delta) dt)``.
     """
 
     A: float = Field(default=140.0, gt=0)

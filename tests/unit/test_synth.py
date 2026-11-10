@@ -15,6 +15,26 @@ from mmsim.data.synth import generate, generate_path, write_world
 
 AS2008 = REPO / "configs" / "synthetic" / "as2008.yaml"
 MINI = FIXTURES / "mini_day" / "config.yaml"
+INTENSITY = REPO / "configs" / "synthetic" / "intensity.yaml"
+
+
+def test_bernoulli_step_fill_probability_is_min_one_lambda_dt() -> None:
+    """A quote at delta fills with probability min(1, A exp(-k delta) dt) per step."""
+    cfg = load_synth_config(AS2008, ["paths=30"])
+    depths = []
+    for world in generate(cfg):
+        ticks = np.rint(world.trades["price"].to_numpy() / cfg.tick_size).astype(np.int64)
+        ts = world.trades["ts_exchange"].to_numpy()
+        mid = world.mid_ticks[np.searchsorted(world.mid_times_ns, ts, side="left") - 1]
+        depths.append(world.trades["side"].to_numpy() * (ticks - mid) * cfg.tick_size)
+    d = np.concatenate(depths)
+    steps = 2 * cfg.paths * round(cfg.horizon / cfg.dt)
+    assert d.size == steps  # one order per side per step
+    a_dt = cfg.market_orders.A * cfg.dt
+    for delta in (-0.5, -0.1, 0.3, 1.0):
+        p = min(1.0, a_dt * math.exp(-cfg.market_orders.k * delta))
+        freq = np.count_nonzero(d >= delta - 1e-9) / steps
+        assert abs(freq - p) < 4 * math.sqrt(max(p * (1 - p), 1e-6) / steps) + 1e-3
 
 
 def test_paths_are_deterministic_and_distinct() -> None:
@@ -47,7 +67,7 @@ def test_binomial_mid_steps_and_horizon() -> None:
 
 
 def test_trades_print_at_or_beyond_the_pre_trade_mid() -> None:
-    world = generate_path(load_synth_config(AS2008), 3)
+    world = generate_path(load_synth_config(INTENSITY, ["horizon=5.0"]), 3)
     ticks = np.rint(world.trades["price"].to_numpy() / 1e-4).astype(np.int64)
     ts = world.trades["ts_exchange"].to_numpy()
     mid = world.mid_ticks[np.searchsorted(world.mid_times_ns, ts, side="left") - 1]

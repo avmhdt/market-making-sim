@@ -1,9 +1,9 @@
 # AC-W-03: GLFT exact strategy, Monte Carlo CARA utility vs Theorem 1's value function.
-# Each set uses T = 1, dt = 0.0005 (<= 0.001), q0 = 0, x0 = 0, s0 = 100; 20,000 paths
+# Each set uses T = 1, dt = 0.0001 (<= 0.001), q0 = 0, x0 = 0, s0 = 100; 20,000 paths
 # (also under --fast: the check is cheap, and CARA utility is heavy-tailed at large gamma).
 # These are the four sets tried when the check was first written; all four are kept.
 paths: 20000
-dt: 0.0005
+dt: 0.0001
 horizon: 1.0
 s0: 100.0
 seed: 2013

@@ -133,15 +133,18 @@ def generate_path(cfg: SynthConfig, path_index: int = 0) -> SynthWorld:
     trade_px: list[Int64Array] = []
     trade_side: list[npt.NDArray[np.int8]] = []
     for side, rng in ((1, buy_rng), (-1, sell_rng)):
-        if cfg.market_orders.arrivals == "poisson":
-            count = int(rng.poisson(cfg.market_orders.A * cfg.horizon))
+        mo = cfg.market_orders
+        if mo.arrivals == "poisson":
+            count = int(rng.poisson(mo.A * cfg.horizon))
             t = np.sort(rng.uniform(0.0, cfg.horizon, size=count)).astype(np.float64)
+            shift = 0.0
         else:
-            steps = round(cfg.horizon / cfg.dt)
-            hit = rng.random(steps) < cfg.market_orders.A * cfg.dt
-            t = (np.flatnonzero(hit).astype(np.float64) + 0.5) * cfg.dt
-            count = t.size
-        depth = rng.exponential(1.0 / cfg.market_orders.k, size=count)
+            # One order per side per step, depth Exp(k) - c with c = ln(1 / (A dt)) / k:
+            # P(D >= delta) = min(1, A exp(-k delta) dt) for every delta, the paper's rule.
+            count = round(cfg.horizon / cfg.dt)
+            t = (np.arange(count, dtype=np.float64) + 0.5) * cfg.dt
+            shift = math.log(1.0 / (mo.A * cfg.dt)) / mo.k
+        depth = rng.exponential(1.0 / mo.k, size=count) - shift
         ts = np.maximum(_to_ns(start_ns, t, cfg.time_unit_ns), start_ns + 1)
         # Trades sort before book changes at equal time, so they see the earlier mid.
         idx = np.searchsorted(mid_times, ts, side="left") - 1
