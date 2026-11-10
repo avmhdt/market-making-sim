@@ -1,0 +1,18 @@
+# AC-W-04 direction checks: a BTC-like tick world (tick 0.1, lot 0.001) whose displayed
+# book sits on the levels a GLFT quote joins, so queue position and latency matter.
+# Three 10-minute paths.
+venue: synthetic
+symbol: SYNUSDT
+start_utc: 2026-03-01T00:00:00Z
+time_unit_ns: 1000000000
+horizon: 600.0
+dt: 1.0
+tick_size: 0.1
+lot_size: 0.001
+mid: {kind: tick_jump, s0: 70000.0, sigma: 0.2}
+market_orders: {A: 2.0, k: 2.0, qty_lots: 5}
+book: {levels: 10, half_spread_ticks: 1, level_lots: 20}
+feed_latency_ns: 0
+feed_jitter_ns: 0
+seed: 5
+paths: 3

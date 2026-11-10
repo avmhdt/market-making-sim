@@ -24,6 +24,7 @@ __all__ = [
     "CalibrationConfig",
     "DataConfig",
     "FeesConfig",
+    "FixedParams",
     "LatencyConfig",
     "MmsConfig",
     "SimConfig",
@@ -52,7 +53,11 @@ class RunSection(_Model):
 
 
 class DataConfig(_Model):
-    """Which data to replay. ``start`` and ``end`` are inclusive UTC days."""
+    """Which data to replay. ``start`` and ``end`` are inclusive UTC days.
+
+    ``synthetic_config`` (with ``source: synthetic``) generates paths in memory from a
+    synthetic-world config instead of reading partitions; ``paths`` limits how many.
+    """
 
     source: Literal["cla", "synthetic", "lobster", "tardis"] = "cla"
     venue: str = "binance-usdm"
@@ -62,6 +67,8 @@ class DataConfig(_Model):
     book_depth: int = Field(default=10, ge=1)
     respect_gap_log: bool = True
     instruments: str = "configs/instruments.yaml"
+    synthetic_config: str | None = None
+    paths: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _window(self) -> DataConfig:
@@ -146,12 +153,28 @@ class SignalConfig(_Model):
     compute_latency_us: int = Field(default=200, ge=0)
 
 
+class FixedParams(_Model):
+    """Known model parameters (synthetic worlds); real-data runs calibrate instead (M3)."""
+
+    A: float = Field(gt=0)
+    k: float = Field(gt=0)
+    sigma: float = Field(gt=0)
+
+
 class StrategyConfig(_Model):
-    """Quoting policy (FR-09 to FR-11)."""
+    """Quoting policy (FR-09 to FR-11).
+
+    ``tau_mode``: ``finite`` uses ``T - t`` to the end of each session (A-S 2008, GLFT exact);
+    ``rolling`` keeps ``tau = horizon_s`` (A-S on 24/7 markets) and evaluates GLFT exact at
+    ``t = 0`` of a ``horizon_s`` problem. ``q_max_units`` is in quote units; ``quote_lots``
+    is the lots per quote. ``params`` fixes A, k and sigma instead of calibrating.
+    """
 
     family: Literal["as", "glft", "glft_exact", "rl"] = "glft"
     gamma: float = Field(default=0.05, gt=0)
     horizon_s: float = Field(default=3600.0, gt=0)
+    tau_mode: Literal["finite", "rolling"] = "rolling"
+    params: FixedParams | None = None
     quote_lots: int | Literal["auto"] = "auto"
     q_max_units: int = Field(default=10, ge=1)
     decision_interval_ms: int = Field(default=100, gt=0)
@@ -211,11 +234,19 @@ class MidProcessConfig(_Model):
 
 
 class MarketOrderConfig(_Model):
-    """Poisson market orders, each side at rate ``A`` with depth ``D ~ Exp(k)`` beyond mid."""
+    """Market orders on each side with depth ``D ~ Exp(k)`` beyond the mid.
+
+    ``poisson``: a Poisson process of rate ``A`` per side (FR-05). ``bernoulli_step``: the
+    discrete procedure of Avellaneda and Stoikov (2008, section 3.3); in each ``dt`` step
+    each side gets one order half-way through the step, with depth ``Exp(k) - c`` and
+    ``c = ln(1 / (A dt)) / k``, so a quote at any distance ``delta`` (negative too) fills
+    with probability ``min(1, A exp(-k delta) dt)``.
+    """
 
     A: float = Field(default=140.0, gt=0)
     k: float = Field(default=1.5, gt=0)
     qty_lots: int = Field(default=1, ge=1)
+    arrivals: Literal["poisson", "bernoulli_step"] = "poisson"
 
 
 class SynthBookConfig(_Model):
@@ -255,6 +286,8 @@ class SynthConfig(_Model):
             raise ValueError("start_utc must carry a timezone (use ...Z)")
         if self.dt > self.horizon:
             raise ValueError("dt must not exceed horizon")
+        if self.market_orders.arrivals == "bernoulli_step" and self.market_orders.A * self.dt > 1:
+            raise ValueError("bernoulli_step arrivals need A * dt <= 1")
         return self
 
 

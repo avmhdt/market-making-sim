@@ -1,0 +1,41 @@
+{
+  "fills_sha256": "b5b56cc697d4446e6d75b3ca4d5a901065044d85c595d4b4c4ff3eed9347a1be",
+  "metrics": {
+    "adverse_selection": -0.0025,
+    "crossed_book_events": 0,
+    "decisions": 1333,
+    "fees": 0.0,
+    "fills": 134,
+    "funding": 0.0,
+    "gaps_skipped": 0,
+    "horizon_ms": 5000,
+    "inventory_residual": -0.011000000000000001,
+    "market_events": 990,
+    "markouts_mid_bps": {
+      "100": 0.0005330464513661272,
+      "1000": 0.00063964575066881,
+      "10000": -0.006183444716238217,
+      "30000": 0.0006395577211074188,
+      "500": 0.00010658894280209269,
+      "5000": -0.0005330699059212027,
+      "60000": -0.00042652756681303575
+    },
+    "max_abs_inventory_lots": 20,
+    "orders_rejected": 0,
+    "orders_submitted": 762,
+    "q_max_lots": 20,
+    "quote_uptime_s": 119.899841259,
+    "reconciliation_residual": 5.551115123125783e-17,
+    "schema": "mms.metrics/1",
+    "sessions": 1,
+    "sharpe_daily_annual": null,
+    "sharpe_hourly_annual": 19.1049731745428,
+    "side0_trades": 0,
+    "spread_capture": 0.367,
+    "status": "ok",
+    "symbol": "SYNUSDT",
+    "time_at_limit_s": 29.882282828,
+    "total_pnl": 0.35350000000000004,
+    "volume_lots": 670
+  }
+}

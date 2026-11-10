@@ -10,6 +10,13 @@ import pytest
 from mmsim.io.parquet import write_canonical
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """``--update-golden`` rewrites tests/golden/*.json (explain why in the commit)."""
+    parser.addoption("--update-golden", action="store_true", default=False)
+
+
 REPO = Path(__file__).parents[1]
 
 BOOK_DTYPES = {

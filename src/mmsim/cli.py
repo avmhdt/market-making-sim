@@ -152,7 +152,23 @@ def run(
     seed: Annotated[int | None, typer.Option(help="Override run.seed.")] = None,
 ) -> None:
     """Run one strategy configuration through the simulator."""
-    _not_yet("M2")
+    from mmsim.runner import execute_run, resolved_config
+
+    settings = get_settings()
+    overrides = list(set_ or [])
+    if sim is not None:
+        overrides.append(f"run.sim={sim}")
+    if seed is not None:
+        overrides.append(f"run.seed={seed}")
+    cfg = load_config(config, overrides, settings=settings)
+    outcome = execute_run(
+        cfg, settings=settings, resolved=resolved_config(config, overrides, settings)
+    )
+    m = outcome.metrics
+    typer.echo(f"run {outcome.run.run_id}: {m['sessions']} session(s), {m['fills']} fills")
+    for key in ("total_pnl", "spread_capture", "adverse_selection", "inventory_residual", "fees"):
+        typer.echo(f"  {key:<20} {m[key]:.6f}")
+    typer.echo(f"  reconciliation residual {m['reconciliation_residual']:.3g}")
 
 
 @app.command("sweep")
@@ -169,8 +185,35 @@ def sweep(
 def validate_synthetic(
     fast: Annotated[bool, typer.Option(help="CI subset: fewer paths, coarser grid.")] = False,
 ) -> None:
-    """Synthetic validation against closed-form results (FR-19)."""
-    _not_yet("M2")
+    """Synthetic validation against closed-form results (FR-19); exit 1 if any check fails."""
+    from mmsim.validate import (
+        ValidationPaths,
+        load_exceptions,
+        run_validation,
+        unexplained_failures,
+        write_report,
+    )
+
+    settings = get_settings()
+    paths = ValidationPaths(
+        repo_root=Path(),
+        results_dir=settings.mms_results_dir,
+        explog_path=settings.mms_results_dir / "trial_log.csv",
+        reports_dir=settings.mms_reports_dir,
+    )
+    checks, figure = run_validation(fast, settings=settings, paths=paths)
+    write_report(checks, figure, settings.mms_reports_dir)
+    failed = [c for c in checks if not c.passed]
+    unexplained = unexplained_failures(checks, load_exceptions(paths.repo_root))
+    for c in checks:
+        mark = "ok  " if c.passed else ("EXC " if c not in unexplained else "FAIL")
+        typer.echo(f"{mark} {c.check} {c.case} {c.metric}: {c.value:.6g} vs {c.target:.6g}")
+    typer.echo(
+        f"{len(checks) - len(failed)}/{len(checks)} checks passed; "
+        f"{len(failed) - len(unexplained)} documented exception(s), "
+        f"{len(unexplained)} other failure(s)"
+    )
+    raise typer.Exit(code=1 if unexplained else 0)
 
 
 @validate_app.command("signal-parity")

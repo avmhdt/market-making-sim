@@ -1,0 +1,19 @@
+# AC-W-01 intensity probe: the A-S 2008 world with Poisson market orders (FR-05) and a
+# display book far from the mid. Path length 100 s; validation runs 4 paths
+# (2 x 140 x 400 = 112,000 market orders), --fast runs 1. dt = 0.05 keeps the number of
+# requotes manageable; it does not change the arrival process.
+venue: synthetic
+symbol: SYN
+start_utc: 2026-02-01T00:00:00Z
+time_unit_ns: 1000000000
+horizon: 100.0
+dt: 0.05
+tick_size: 0.0001
+lot_size: 1.0
+mid: {kind: binomial_grid, s0: 100.0, sigma: 2.0}
+market_orders: {A: 140.0, k: 1.5, qty_lots: 1, arrivals: poisson}
+book: {levels: 1, half_spread_ticks: 100000, level_lots: 1}
+feed_latency_ns: 0
+feed_jitter_ns: 0
+seed: 101
+paths: 4
