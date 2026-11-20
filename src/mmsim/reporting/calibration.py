@@ -86,7 +86,7 @@ def calibrate_day(
 def intensity_figure(
     fits: pl.DataFrame, symbol: str, day: date, tick: float, min_ticks: int, path: Path
 ) -> None:
-    """Mean empirical rate per depth (across accepted windows) against the median fit."""
+    """Median empirical rate per depth (across accepted windows) against the median fit."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -94,12 +94,17 @@ def intensity_figure(
 
     rates = np.array(fits["rates"].to_list(), dtype=np.float64)
     depth = (np.arange(rates.shape[1]) + min_ticks) * tick
-    mean = np.nanmean(np.where(rates > 0, rates, np.nan), axis=0)
+    median = np.nanmedian(np.where(rates > 0, rates, np.nan), axis=0)
     A, k = float(np.median(fits["A"].to_numpy())), float(np.median(fits["k"].to_numpy()))
     path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(1600 / 150, 4.5), dpi=150)
-    ax.semilogy(depth, mean, "o", label=f"empirical, mean of {len(fits)} windows")
-    ax.semilogy(depth, A * np.exp(-k * depth), "-", label=f"A exp(-k delta), A={A:.3g}, k={k:.3g}")
+    ax.semilogy(depth, median, "o", label=f"empirical, median of {len(fits)} 600 s windows")
+    ax.semilogy(
+        depth,
+        A * np.exp(-k * depth),
+        "-",
+        label=f"median fit A exp(-k delta), A={A:.3g}, k={k:.3g}",
+    )
     ax.set_xlabel("depth beyond the pre-trade mid (price)")
     ax.set_ylabel("market orders per second and side")
     ax.set_title(f"{symbol} {day}: order arrival intensity by depth")
