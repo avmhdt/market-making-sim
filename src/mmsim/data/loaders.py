@@ -57,12 +57,29 @@ def list_days(
     return sorted(days)
 
 
+_PART = re.compile(r"^part-(\d+)(?:-r(\d+))?\.parquet$")
+
+
+def _part_key(path: Path) -> tuple[int, int, str]:
+    """Hour, then restart number: ``part-21.parquet`` before ``part-21-r1.parquet``."""
+    m = _PART.match(path.name)
+    if not m:
+        return (10**9, 0, path.name)
+    return (int(m.group(1)), int(m.group(2) or 0), path.name)
+
+
 def day_files(root: Path, dataset: str, venue: str, symbol: str, day: date) -> list[Path]:
-    """The Parquet parts of one symbol-day, in name (hour) order."""
+    """The closed Parquet parts of one symbol-day, in hour then restart order.
+
+    The recorder writes ``part-HH.parquet`` per UTC hour of ``ts_recv`` and, after a restart
+    within the hour, ``part-HH-r1.parquet`` and so on; files still being written end in
+    ``.tmp`` and are skipped.
+    """
     directory = partition_dir(root, dataset, venue, symbol, day)
     if not directory.is_dir():
         return []
-    return sorted(p for p in directory.iterdir() if p.suffix == ".parquet" and p.is_file())
+    files = [p for p in directory.iterdir() if p.suffix == ".parquet" and p.is_file()]
+    return sorted(files, key=_part_key)
 
 
 def iter_row_groups(

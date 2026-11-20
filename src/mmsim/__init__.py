@@ -14,4 +14,9 @@ for _var in (
 ):
     os.environ.setdefault(_var, "4")
 
+import pyarrow as _pa  # noqa: E402
+
+_pa.set_cpu_count(min(_pa.cpu_count(), int(os.environ["POLARS_MAX_THREADS"])))
+_pa.set_io_thread_count(min(_pa.io_thread_count(), int(os.environ["POLARS_MAX_THREADS"])))
+
 __version__ = "0.1.0"

@@ -43,6 +43,8 @@ __all__ = [
 TRADE_PRIORITY = 0
 BOOK_PRIORITY = 1
 GRID_TOLERANCE = 1e-6
+OFF_GRID_MAX_SHARE = 1e-5
+"""Book rows off the tick grid are dropped and counted up to this share of a chunk."""
 
 Int64Array = npt.NDArray[np.int64]
 Int8Array = npt.NDArray[np.int8]
@@ -96,6 +98,8 @@ class ReplayStats:
     trades: int = 0
     side0_trades: int = 0
     dropped_before_snapshot: int = 0
+    off_grid_book_rows: int = 0
+    """Book rows whose price is off the tick grid (dropped; seen on SOLUSDT, M3-11)."""
     exchange_time_clamped: int = field(default=0)
     """Rows whose ``ts_exchange`` went backwards and were clamped to the running maximum."""
 
@@ -166,7 +170,21 @@ def book_batches(
         if last_key is not None and first < last_key:
             raise ReplayOrderError(f"book_l2 key {first} after {last_key}")
         last_key = (int(recv[-1]), int(bid[-1]))
-        cols["price_ticks"] = to_ticks(cols.pop("price").astype(np.float64), tick_size)
+        price = cols.pop("price").astype(np.float64)
+        scaled = price / tick_size
+        off = np.abs(scaled - np.rint(scaled)) >= GRID_TOLERANCE
+        if off.any():
+            n_off = int(off.sum())
+            if n_off > OFF_GRID_MAX_SHARE * off.size:
+                to_ticks(price, tick_size)  # raises with the worst row
+            stats.off_grid_book_rows += n_off
+            keep = ~off
+            cols = {k: v[keep] for k, v in cols.items()}
+            price = price[keep]
+            recv, bid = recv[keep], bid[keep]
+            if price.size == 0:
+                continue
+        cols["price_ticks"] = to_ticks(price, tick_size)
         cols["qty_lots"] = to_lots(cols.pop("qty").astype(np.float64), lot_size)
         if carry is not None:
             cols = {k: np.concatenate([carry[k], v]) for k, v in cols.items()}

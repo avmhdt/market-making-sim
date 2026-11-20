@@ -107,7 +107,8 @@ def build_cache(
         "trades": len(t_rows),
         "replay_stats": None if stats is None else {
             k: getattr(stats, k) for k in ("book_batches", "trades", "side0_trades",
-                                           "dropped_before_snapshot", "exchange_time_clamped")
+                                           "dropped_before_snapshot", "exchange_time_clamped",
+                                           "off_grid_book_rows")
         },
     }  # fmt: skip
     (directory / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")

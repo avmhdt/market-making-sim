@@ -16,7 +16,7 @@ for sym in BTCUSDT ETHUSDT SOLUSDT; do
       echo "$(date -u +%FT%TZ) start $cfg $sym" >> "$LOGS/$sym.log"
       nice -n 10 ionice -c3 "$PY" run --config "configs/strategies/$cfg.yaml" \
         --set "data.symbols=[$sym]" >> "$LOGS/$sym.log" 2>&1
-      echo "$(date -u +%FT%TZ) exit $? $cfg $sym" >> "$LOGS/$sym.log"
+      rc=$?; echo "$(date -u +%FT%TZ) exit $rc $cfg $sym" >> "$LOGS/$sym.log"
     done
   ) &
 done

@@ -127,6 +127,8 @@ class Session:
     gaps: list[tuple[int, int]] = field(default_factory=list)
     """Merged gap-log intervals (DQ-03): quotes are cancelled and quoting pauses."""
     note: str = ""
+    cache_dir: Path | None = None
+    """Decoded event cache, whose meta.json holds the replay counters."""
 
 
 @dataclass
@@ -561,6 +563,7 @@ def build_sessions(cfg: MmsConfig, settings: Settings, repo_root: Path) -> list[
             )  # fmt: skip
 
         day_events: Callable[[], Iterator[MarketEvent]] = decode
+        cache_dir: Path | None = None
         if data.source == "cla" and data.cache:
             cache_dir = partition_dir(
                 settings.project_data_root / "interim" / "events", "events", data.venue, symbol, day
@@ -599,6 +602,7 @@ def build_sessions(cfg: MmsConfig, settings: Settings, repo_root: Path) -> list[
                 seed=_session_seed(cfg.run.seed, i),
                 gaps=[(max(a, start), min(b, start + NS_PER_DAY)) for a, b in gaps],
                 note="" if ckpt is None else f"starts at checkpoint {ckpt.checkpoint_id}",
+                cache_dir=cache_dir if data.source == "cla" and data.cache else None,
             )
         )
     if not sessions:
@@ -623,8 +627,14 @@ def _session_quality(session: Session, log: SessionLog) -> dict[str, Any]:
         reasons.append(f"gap {gap_share:.2%} >= 5% (DQ-10)")
     if crossed_share > CROSSED_SHARE_MAX:
         reasons.append(f"crossed {crossed_share:.4%} > 0.01% (DQ-04)")
+    replay_stats: dict[str, Any] = {}
+    if session.cache_dir is not None and (session.cache_dir / "meta.json").exists():
+        meta = json.loads((session.cache_dir / "meta.json").read_text(encoding="utf-8"))
+        replay_stats = meta.get("replay_stats") or {}
     return {
         "day": session.day,
+        "off_grid_book_rows": int(replay_stats.get("off_grid_book_rows", 0)),
+        "dropped_before_start": int(replay_stats.get("dropped_before_snapshot", 0)),
         "gaps": len(session.gaps),
         "gap_s": gap_ns / NS_PER_S,
         "gap_share": gap_share,
