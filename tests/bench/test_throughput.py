@@ -23,7 +23,8 @@ TARGET_EVENTS_PER_S = 50_000
 def benchmark_stream(events: int = 1_000_000) -> dict[str, float]:
     """Run GLFT through the fallback on a synthetic world of about ``events`` market events."""
     cfg = load_synth_config(REPO / "tests" / "fixtures" / "mini_day" / "config.yaml",
-                            ["horizon=40000.0", "dt=1.0", "seed=1"])  # fmt: skip
+                            ["horizon=50000.0", "dt=1.0", "seed=1", "mid.sigma=0.35",
+                             "market_orders.A=4.0"])  # fmt: skip
     world = generate_path(cfg, 0)
     inst = world.instrument
     sim_cfg = SimConfig.model_validate({
