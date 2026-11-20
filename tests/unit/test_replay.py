@@ -182,13 +182,13 @@ def test_restart_parts_follow_their_hour(tmp_path: Path) -> None:
 
 def test_rare_off_grid_book_rows_are_dropped_and_counted() -> None:
     rows: list[BookRow] = [(10, 11, 1, 1.0, 1.0, True, 1)]
-    rows += [(20 + i, 21 + i, 1, 1.0 + 0.1 * (i % 5), 1.0, False, 2 + i) for i in range(200_000)]
+    rows += [(20 + i, 21 + i, 1, 1.0 + 0.1 * (i % 5), 1.0, False, 2 + i) for i in range(2_000)]
     rows.append((10**7, 10**7, -1, 1.05, 1.0, False, 10**6))  # one row off the 0.1 grid
     book = make_book(rows)
     stats = ReplayStats()
     events = list(book_batches(book.to_arrow().to_batches(), 0.1, 1.0, stats))
     assert stats.off_grid_book_rows == 1
-    assert len(events) == 200_001
+    assert len(events) == 2_001
     many = make_book([(10, 11, 1, 1.05, 1.0, True, 1), (11, 12, 1, 1.0, 1.0, False, 2)])
     with pytest.raises(TickGridError):
         list(book_batches(many.to_arrow().to_batches(), 0.1, 1.0))

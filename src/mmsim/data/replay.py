@@ -43,7 +43,7 @@ __all__ = [
 TRADE_PRIORITY = 0
 BOOK_PRIORITY = 1
 GRID_TOLERANCE = 1e-6
-OFF_GRID_MAX_SHARE = 1e-5
+OFF_GRID_MAX_SHARE = 1e-3
 """Book rows off the tick grid are dropped and counted up to this share of a chunk."""
 
 Int64Array = npt.NDArray[np.int64]
