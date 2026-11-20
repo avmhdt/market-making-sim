@@ -13,6 +13,7 @@ import json
 import math
 import platform
 import statistics
+import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
@@ -466,6 +467,15 @@ def _appender(out: list[tuple[int, int, int]]) -> Callable[[int, int, int], None
     return add
 
 
+def _peak_rss_mb() -> float | None:
+    """Peak resident memory of this process (Unix only)."""
+    if sys.platform == "win32":
+        return None
+    import resource
+
+    return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024
+
+
 def _session_seed(seed: int, index: int) -> int:
     return int(np.random.SeedSequence([seed, index]).generate_state(1)[0])
 
@@ -711,6 +721,7 @@ def execute_run(
                  error=f"{type(exc).__name__}: {exc}")  # fmt: skip
         raise
     outcome.metrics["runtime_s"] = time.perf_counter() - started
+    outcome.metrics["peak_rss_mb"] = _peak_rss_mb()
     run.write_metrics(outcome.metrics)
     return outcome
 

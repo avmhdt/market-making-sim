@@ -26,7 +26,9 @@ __all__ = ["LF", "METRICS_SCHEMA", "RUNTIME_FIELDS", "RunDir", "normalized_metri
 LF = "\n"
 """Line ending for every text output, so files match across operating systems."""
 METRICS_SCHEMA = "mms.metrics/1"
-RUNTIME_FIELDS = frozenset({"runtime_s", "events_per_s", "finished_utc", "package_versions"})
+RUNTIME_FIELDS = frozenset(
+    {"runtime_s", "events_per_s", "finished_utc", "package_versions", "peak_rss_mb"}
+)
 """Fields excluded from determinism comparisons (NFR-03)."""
 
 
