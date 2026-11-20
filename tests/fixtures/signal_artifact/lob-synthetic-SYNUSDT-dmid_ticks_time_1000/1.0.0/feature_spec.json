@@ -1,0 +1,183 @@
+{
+  "spec_version": "1.0.0",
+  "model_name": "lob-synthetic-SYNUSDT-dmid_ticks_time_1000",
+  "model_version": "1.0.0",
+  "venue": "synthetic",
+  "symbols": [
+    "SYNUSDT"
+  ],
+  "tick_size": 0.1,
+  "lot_size": 0.001,
+  "book_depth": 10,
+  "timestamp": "ts_recv",
+  "clock": "time",
+  "sample_grid_ms": 100,
+  "target": {
+    "name": "dmid_ticks_time_1000",
+    "unit": "ticks",
+    "horizon": {
+      "kind": "clock",
+      "value": 1000,
+      "unit": "ms"
+    },
+    "latency_ms": 0
+  },
+  "features": [
+    {
+      "name": "ofi_l1_ms1000",
+      "kind": "ofi",
+      "levels": [
+        1
+      ],
+      "window": 1000,
+      "window_unit": "ms",
+      "params": {
+        "depth_norm": 1.0
+      },
+      "definition": "sum of CKS e_n at level 1 over (t-1000ms, t]",
+      "dtype": "float64",
+      "normalization": {
+        "method": "zscore_clip",
+        "mean": -0.020521446593776277,
+        "std": 0.810849100015986,
+        "clip": 5.0
+      }
+    },
+    {
+      "name": "qi_l1",
+      "kind": "queue_imbalance",
+      "levels": [
+        1
+      ],
+      "window": null,
+      "window_unit": null,
+      "params": {},
+      "definition": "(bid_1 - ask_1) / (bid_1 + ask_1)",
+      "dtype": "float64",
+      "normalization": {
+        "method": "zscore_clip",
+        "mean": 0.0,
+        "std": 1.0,
+        "clip": 5.0
+      }
+    },
+    {
+      "name": "qi_l5",
+      "kind": "queue_imbalance",
+      "levels": [
+        5
+      ],
+      "window": null,
+      "window_unit": null,
+      "params": {},
+      "definition": "top-5 queue imbalance",
+      "dtype": "float64",
+      "normalization": {
+        "method": "zscore_clip",
+        "mean": 0.0,
+        "std": 1.0,
+        "clip": 5.0
+      }
+    },
+    {
+      "name": "microprice_adj_ticks",
+      "kind": "microprice",
+      "levels": [
+        1
+      ],
+      "window": null,
+      "window_unit": null,
+      "params": {
+        "imbalance_buckets": 10,
+        "max_spread_ticks": 4,
+        "table": [
+          [
+            0.0,
+            -0.36
+          ],
+          [
+            0.1,
+            -0.28
+          ],
+          [
+            0.2,
+            -0.2
+          ],
+          [
+            0.3,
+            -0.12
+          ],
+          [
+            0.4,
+            -0.04
+          ],
+          [
+            0.5,
+            0.04
+          ],
+          [
+            0.6,
+            0.12
+          ],
+          [
+            0.7,
+            0.2
+          ],
+          [
+            0.8,
+            0.28
+          ],
+          [
+            0.9,
+            0.36
+          ]
+        ]
+      },
+      "definition": "g(I) lookup, ticks",
+      "dtype": "float64",
+      "normalization": {
+        "method": "zscore_clip",
+        "mean": 0.0399999999999993,
+        "std": 7.008282842946301e-16,
+        "clip": 5.0
+      }
+    },
+    {
+      "name": "tsi_vol_ms1000",
+      "kind": "trade_sign_imbalance",
+      "levels": null,
+      "window": 1000,
+      "window_unit": "ms",
+      "params": {
+        "weight": "volume"
+      },
+      "definition": "signed volume / volume over (t-1000ms, t]",
+      "dtype": "float64",
+      "normalization": {
+        "method": "zscore_clip",
+        "mean": 0.07408016243171828,
+        "std": 0.5965475995986826,
+        "clip": 5.0
+      }
+    },
+    {
+      "name": "rv_ms1000",
+      "kind": "realized_vol",
+      "levels": null,
+      "window": 1000,
+      "window_unit": "ms",
+      "params": {
+        "sample_ms": 100
+      },
+      "definition": "sqrt of summed squared 100 ms mid changes over the window, ticks",
+      "dtype": "float64",
+      "normalization": {
+        "method": "zscore_clip",
+        "mean": 1.8823652099887813,
+        "std": 0.6764187010403018,
+        "clip": 5.0
+      }
+    }
+  ],
+  "compatibility": "consumers MUST reject a different spec_version major; MUST apply normalization before predict"
+}

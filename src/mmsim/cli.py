@@ -238,8 +238,22 @@ def validate_synthetic(
 def validate_signal_parity(
     model_dir: Annotated[Path, typer.Option(help="Signal artifact version folder.")],
 ) -> None:
-    """Online vs offline signal parity (AC-W-09)."""
-    _not_yet("M4")
+    """Online vs offline signal parity (AC-W-09); exit 1 unless every comparison is within 1e-9."""
+    from dataclasses import asdict
+
+    import polars as pl
+
+    from mmsim.reporting.report import write_table
+    from mmsim.signal.parity import check_parity
+
+    settings = get_settings()
+    result = check_parity(model_dir, settings=settings)
+    row = {"model": model_dir.parent.name, "version": model_dir.name, **asdict(result),
+           "passed": result.passed}  # fmt: skip
+    write_table(pl.DataFrame([row]), settings.mms_reports_dir, "signal_parity", digits=4)
+    for key, value in row.items():
+        typer.echo(f"{key:<28} {value}")
+    raise typer.Exit(code=0 if result.passed else 1)
 
 
 @validate_app.command("sim-parity")
