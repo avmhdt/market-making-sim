@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import heapq
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
-import polars as pl
 import pyarrow as pa
+import pyarrow.compute as pc
 
 __all__ = [
     "BOOK_PRIORITY",
@@ -121,17 +122,19 @@ def to_lots(qty: npt.NDArray[np.float64], lot_size: float) -> Int64Array:
     return _to_grid(np.asarray(qty, dtype=np.float64), lot_size, "lot")
 
 
-def _trade_id_key(ids: pl.Series) -> pl.Series:
-    numeric = ids.cast(pl.Int64, strict=False)
-    if numeric.null_count() == 0:
-        return numeric
-    return pl.Series(ids.name, np.zeros(len(ids), dtype=np.int64))
+_BOOK_COLS = ("ts_exchange", "ts_recv", "seq", "side", "price", "qty", "is_snapshot", "batch_id")
 
 
-def _sorted_chunk(batch: pa.RecordBatch, keys: list[str]) -> pl.DataFrame:
-    frame = pl.from_arrow(batch)
-    assert isinstance(frame, pl.DataFrame)
-    return frame.sort(keys, maintain_order=True)
+def _col(batch: pa.RecordBatch, name: str) -> npt.NDArray[Any]:
+    return np.asarray(batch.column(name).to_numpy(zero_copy_only=False))
+
+
+def _is_sorted(primary: Int64Array, secondary: Int64Array) -> bool:
+    if primary.size < 2:
+        return True
+    dp = np.diff(primary)
+    ds = np.diff(secondary)
+    return bool(np.all((dp > 0) | ((dp == 0) & (ds >= 0))))
 
 
 def book_batches(
@@ -140,52 +143,94 @@ def book_batches(
     lot_size: float,
     stats: ReplayStats | None = None,
 ) -> Iterator[BookBatchEvent]:
-    """Group book_l2 rows into batches with non-decreasing matching time."""
+    """Group book_l2 rows into batches with non-decreasing matching time.
+
+    Works on NumPy arrays per row group (no dataframe per chunk), so it is cheap and
+    single-threaded.
+    """
     stats = stats if stats is not None else ReplayStats()
     last_key: tuple[int, int] | None = None
     ts_match = np.iinfo(np.int64).min
-    carry: pl.DataFrame | None = None
-
-    def emit(rows: pl.DataFrame) -> BookBatchEvent:
-        nonlocal ts_match
-        ts_ex = int(rows.get_column("ts_exchange").max())  # type: ignore[arg-type]
+    carry: dict[str, npt.NDArray[Any]] | None = None
+    for chunk in chunks:
+        if chunk.num_rows == 0:
+            continue
+        cols = {name: _col(chunk, name) for name in _BOOK_COLS}
+        recv = cols["ts_recv"].astype(np.int64)
+        bid = cols["batch_id"].astype(np.int64)
+        if not _is_sorted(recv, bid):
+            order = np.lexsort((bid, recv))
+            cols = {k: v[order] for k, v in cols.items()}
+            recv, bid = recv[order], bid[order]
+        first = (int(recv[0]), int(bid[0]))
+        if last_key is not None and first < last_key:
+            raise ReplayOrderError(f"book_l2 key {first} after {last_key}")
+        last_key = (int(recv[-1]), int(bid[-1]))
+        cols["price_ticks"] = to_ticks(cols.pop("price").astype(np.float64), tick_size)
+        cols["qty_lots"] = to_lots(cols.pop("qty").astype(np.float64), lot_size)
+        if carry is not None:
+            cols = {k: np.concatenate([carry[k], v]) for k, v in cols.items()}
+            carry = None
+        ids = cols["batch_id"]
+        starts = np.flatnonzero(np.r_[True, ids[1:] != ids[:-1]])
+        ends = np.r_[starts[1:], ids.size]
+        ts_ex_all = cols["ts_exchange"].astype(np.int64)
+        seq_all = cols["seq"].astype(np.int64)
+        side_all = cols["side"].astype(np.int8)
+        snap_all = cols["is_snapshot"].astype(bool)
+        recv_all = cols["ts_recv"].astype(np.int64)
+        px_all = cols["price_ticks"]
+        qty_all = cols["qty_lots"]
+        # Per-batch maxima in one pass; the last batch may continue in the next chunk.
+        ts_max = np.maximum.reduceat(ts_ex_all, starts).tolist()
+        seq_max = np.maximum.reduceat(seq_all, starts).tolist()
+        recv_first = recv_all[starts].tolist()
+        id_first = ids[starts].tolist()
+        snap_first = snap_all[starts].tolist()
+        for j, (lo, hi) in enumerate(zip(starts[:-1].tolist(), ends[:-1].tolist(), strict=True)):
+            ts_ex = ts_max[j]
+            if ts_ex < ts_match:
+                stats.exchange_time_clamped += 1
+            else:
+                ts_match = ts_ex
+            stats.book_batches += 1
+            yield BookBatchEvent(
+                ts_match=ts_match,
+                ts_exchange=ts_ex,
+                ts_recv=recv_first[j],
+                batch_id=id_first[j],
+                seq=seq_max[j],
+                is_snapshot=bool(snap_first[j]),
+                side=side_all[lo:hi],
+                price_ticks=px_all[lo:hi],
+                qty_lots=qty_all[lo:hi],
+            )
+        tail = int(starts[-1])
+        carry = {k: v[tail:] for k, v in cols.items()}
+    if carry is not None and carry["batch_id"].size:
+        ts_ex = int(carry["ts_exchange"].astype(np.int64).max())
         if ts_ex < ts_match:
             stats.exchange_time_clamped += 1
         ts_match = max(ts_match, ts_ex)
         stats.book_batches += 1
-        snap = rows.get_column("is_snapshot")
-        return BookBatchEvent(
+        yield BookBatchEvent(
             ts_match=ts_match,
             ts_exchange=ts_ex,
-            ts_recv=int(rows.get_column("ts_recv")[0]),
-            batch_id=int(rows.get_column("batch_id")[0]),
-            seq=int(rows.get_column("seq").max()),  # type: ignore[arg-type]
-            is_snapshot=bool(snap[0]),
-            side=rows.get_column("side").to_numpy().astype(np.int8),
-            price_ticks=to_ticks(rows.get_column("price").to_numpy(), tick_size),
-            qty_lots=to_lots(rows.get_column("qty").to_numpy(), lot_size),
+            ts_recv=int(carry["ts_recv"][0]),
+            batch_id=int(carry["batch_id"][0]),
+            seq=int(carry["seq"].astype(np.int64).max()),
+            is_snapshot=bool(carry["is_snapshot"][0]),
+            side=carry["side"].astype(np.int8),
+            price_ticks=carry["price_ticks"],
+            qty_lots=carry["qty_lots"],
         )
 
-    for chunk in chunks:
-        if chunk.num_rows == 0:
-            continue
-        frame = _sorted_chunk(chunk, ["ts_recv", "batch_id"])
-        first = (int(frame["ts_recv"][0]), int(frame["batch_id"][0]))
-        if last_key is not None and first < last_key:
-            raise ReplayOrderError(f"book_l2 key {first} after {last_key}")
-        last_key = (int(frame["ts_recv"][-1]), int(frame["batch_id"][-1]))
-        if carry is not None:
-            frame = pl.concat([carry, frame], how="vertical_relaxed")
-            carry = None
-        ids = frame.get_column("batch_id").to_numpy()
-        starts = np.flatnonzero(np.r_[True, ids[1:] != ids[:-1]])
-        ends = np.r_[starts[1:], len(ids)]
-        # The last batch may continue in the next chunk: hold it back.
-        for lo, hi in zip(starts[:-1], ends[:-1], strict=True):
-            yield emit(frame.slice(int(lo), int(hi - lo)))
-        carry = frame.slice(int(starts[-1]))
-    if carry is not None and carry.height:
-        yield emit(carry)
+
+def _trade_id_key(ids: pa.Array | pa.ChunkedArray) -> Int64Array:
+    try:
+        return np.asarray(pc.cast(ids, pa.int64()).to_numpy(zero_copy_only=False), dtype=np.int64)
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+        return np.zeros(len(ids), dtype=np.int64)
 
 
 def trade_rows(
@@ -201,37 +246,43 @@ def trade_rows(
     for chunk in chunks:
         if chunk.num_rows == 0:
             continue
-        frame = pl.from_arrow(chunk)
-        assert isinstance(frame, pl.DataFrame)
-        frame = frame.with_columns(
-            _trade_id_key(frame.get_column("trade_id").cast(pl.String)).alias("_k")
-        ).sort(["ts_recv", "_k"], maintain_order=True)
-        first = int(frame["ts_recv"][0])
+        ids_arr = chunk.column("trade_id")
+        if not pa.types.is_string(ids_arr.type) and not pa.types.is_large_string(ids_arr.type):
+            ids_arr = pc.cast(ids_arr, pa.string())
+        recv = _col(chunk, "ts_recv").astype(np.int64)
+        key = _trade_id_key(ids_arr)
+        ids = ids_arr.to_pylist()
+        cols = {n: _col(chunk, n) for n in ("ts_exchange", "price", "qty", "side")}
+        if not _is_sorted(recv, key):
+            order = np.lexsort((key, recv))
+            recv = recv[order]
+            cols = {k: v[order] for k, v in cols.items()}
+            ids = [ids[i] for i in order.tolist()]
+        first = int(recv[0])
         if last_recv is not None and first < last_recv:
             raise ReplayOrderError(f"trades ts_recv {first} after {last_recv}")
-        last_recv = int(frame["ts_recv"][-1])
-        prices = to_ticks(frame.get_column("price").to_numpy(), tick_size)
-        lots = to_lots(frame.get_column("qty").to_numpy(), lot_size)
-        ts_ex = frame.get_column("ts_exchange").to_numpy()
-        ts_recv = frame.get_column("ts_recv").to_numpy()
-        sides = frame.get_column("side").to_numpy()
-        ids = frame.get_column("trade_id").cast(pl.String).to_list()
-        for i in range(frame.height):
-            ex = int(ts_ex[i])
+        last_recv = int(recv[-1])
+        prices = to_ticks(cols["price"].astype(np.float64), tick_size).tolist()
+        lots = to_lots(cols["qty"].astype(np.float64), lot_size).tolist()
+        ts_ex = cols["ts_exchange"].astype(np.int64).tolist()
+        sides = cols["side"].astype(np.int64).tolist()
+        recv_l = recv.tolist()
+        for i, ex in enumerate(ts_ex):
             if ex < ts_match:
                 stats.exchange_time_clamped += 1
-            ts_match = max(ts_match, ex)
-            side = int(sides[i])
+            else:
+                ts_match = ex
+            side = sides[i]
             stats.trades += 1
             if side == 0:
                 stats.side0_trades += 1
             yield TradeRowEvent(
                 ts_match=ts_match,
                 ts_exchange=ex,
-                ts_recv=int(ts_recv[i]),
+                ts_recv=recv_l[i],
                 trade_id=str(ids[i]),
-                price_ticks=int(prices[i]),
-                qty_lots=int(lots[i]),
+                price_ticks=prices[i],
+                qty_lots=lots[i],
                 side=side,
             )
 
@@ -259,14 +310,39 @@ def replay(
     tick_size: float,
     lot_size: float,
     stats: ReplayStats | None = None,
+    *,
+    start: BookBatchEvent | None = None,
 ) -> Iterator[MarketEvent]:
-    """The merged stream, starting at the first snapshot batch (DQ-03)."""
+    """The merged stream, starting at the first snapshot batch (DQ-03).
+
+    With ``start`` (a book checkpoint as a snapshot batch, see ``load_checkpoint``) the
+    stream begins with it instead: book batches up to its ``seq`` and trades received
+    before it are dropped and counted, and earlier matching times are lifted to it.
+    """
     stats = stats if stats is not None else ReplayStats()
+    books: Iterable[BookBatchEvent] = book_batches(book_chunks, tick_size, lot_size, stats)
+    trades: Iterable[TradeRowEvent] = trade_rows(trade_chunks, tick_size, lot_size, stats)
+    if start is not None:
+        floor = start.ts_match
+
+        def after_books(src: Iterable[BookBatchEvent]) -> Iterator[BookBatchEvent]:
+            yield start
+            for b in src:
+                if b.seq <= start.seq:
+                    stats.dropped_before_snapshot += 1
+                    continue
+                yield b if b.ts_match >= floor else replace(b, ts_match=floor)
+
+        def after_trades(src: Iterable[TradeRowEvent]) -> Iterator[TradeRowEvent]:
+            for t in src:
+                if t.ts_recv < start.ts_recv:
+                    stats.dropped_before_snapshot += 1
+                    continue
+                yield t if t.ts_match >= floor else replace(t, ts_match=floor)
+
+        books, trades = after_books(books), after_trades(trades)
     started = False
-    for event in merge_streams(
-        book_batches(book_chunks, tick_size, lot_size, stats),
-        trade_rows(trade_chunks, tick_size, lot_size, stats),
-    ):
+    for event in merge_streams(books, trades):
         if not started:
             if isinstance(event, BookBatchEvent) and event.is_snapshot:
                 started = True

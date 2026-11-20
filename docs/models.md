@@ -40,7 +40,23 @@ The problem in `δ'` is the original one with `A'` in place of `A`, so the polic
 
 ## Units on real data
 
-`σ` comes from 1 s sampled mid changes and `A`, `k` from the intensity fit of FR-12 (M3). A quote unit is `quote_lots` lots (D-08: the smallest lot multiple with notional ≥ 1,000 USD), and `Q = q_max_units` (D-08: 10).
+Inventory is counted in quote units of `m = quote_lots × lot_size` base units (D-08: the smallest lot multiple with notional ≥ 1,000 USD, so about 0.014 BTC). `γ` is risk aversion per (USD × quote unit). The policy moves the calibrated inputs to that unit before applying the formulas and moves the distances back afterwards:
+
+| Quantity | Per base unit (calibrated) | Per quote unit (model) |
+|---|---|---|
+| Mid volatility | `σ` (USD / √s) | `σ_u = m σ` |
+| Intensity decay | `k` (1 / USD of price) | `k_u = k / m` |
+| Arrival rate | `A` (orders / s) | `A` |
+| Maker fee | `c = maker_bps / 1e4 × mid` | `c_u = m c` |
+| Distance | `δ = δ_u / m` | `δ_u` |
+
+This is the A–S/GLFT model with one "share" defined as one quote unit. When `m = 1` (the A–S 2008 validation) nothing changes.
+
+## Calibration (FR-12)
+
+`src/mmsim/models/calibration.py`. Trades with the same exchange time and side form one market order. Its depth is `side × (worst price − pre-trade mid)`, where the pre-trade mid is the last visible mid strictly before the order. For `δ_j = j × tick`, `j = 1..20`, `λ_j` is the number of orders with depth ≥ `δ_j` per second and side, and `ln λ_j = ln A − k δ_j` is fitted by count-weighted least squares, pooled over both sides; the per-side fits are logged too. `σ` is the standard deviation of mid changes on a 1 s grid. A rolling fit uses the past 600 s and refits every 60 s. A fit is rejected, and the previous one kept, if it has fewer than 200 orders or `R² < 0.8`. Each day starts with a 600 s warm-up without quotes (DQ-05).
+
+On a one-tick-spread market most trades sit at the touch, half a tick from the mid, so they fall below the first grid depth of one tick. The fit then describes orders that walk the book, and `A` at `δ = 0` is an extrapolation. This is the spec's R-05 risk; `calib.parquet` and `intensity_fit_<symbol>.png` show how well the exponential fits.
 
 ## Validation
 

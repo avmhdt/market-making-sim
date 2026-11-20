@@ -13,7 +13,9 @@ Checks, each a row of ``reports/tables/synthetic_validation.csv``:
 5. AC-W-14: GLFT asymptotic against exact quotes at a converged horizon, within 5% for
    ``|q| <= Q/2``; the gap near the bounds is reported.
 
-Calibration recovery (FR-19 item 4, AC-W-10) joins in M3. Every Monte Carlo and
+6. AC-W-10: calibration recovers the generator's A, k and sigma (FR-19 item 4).
+
+Every Monte Carlo and
 event-driven run appends one trial-log row (family ``synthetic_validation``).
 """
 
@@ -37,6 +39,7 @@ from mmsim.config import MmsConfig, SimConfig, load_synth_config
 from mmsim.data.replay import MarketEvent, replay
 from mmsim.data.synth import generate_path
 from mmsim.io.runlog import LF, RunDir
+from mmsim.models.calibration import estimate_intensity
 from mmsim.models.glft import (
     glft_asymptotic,
     glft_certainty_equivalent,
@@ -451,6 +454,39 @@ def check_queue_latency(paths: ValidationPaths, settings: Settings) -> list[Chec
     ]  # fmt: skip
 
 
+# ---- AC-W-10 ------------------------------------------------------------------------
+
+
+def check_calibration(paths: ValidationPaths) -> list[Check]:
+    """Recover the generator's A, k and sigma on 20 seeds (median within 5%, 95% within 10%)."""
+    synth = load_synth_config(paths.repo_root / "configs" / "synthetic" / "calibration.yaml")
+    truth = {"A": synth.market_orders.A, "k": synth.market_orders.k, "sigma": synth.mid.sigma}
+    errors: dict[str, list[float]] = {name: [] for name in truth}
+    for i in range(synth.paths):
+        world = generate_path(synth, i)
+        trades = world.trades.select(
+            pl.col("ts_exchange").alias("ts"),
+            (pl.col("price") / synth.tick_size).round().cast(pl.Int64).alias("price_ticks"),
+            pl.col("side"),
+        )
+        mids = pl.DataFrame({"ts": world.mid_times_ns, "mid_x2": 2 * world.mid_ticks})
+        p = estimate_intensity(trades, mids, tick_size=synth.tick_size, max_depth_ticks=20,
+                               window_s=synth.horizon, ts_fit=world.end_ns)  # fmt: skip
+        for name, value in (("A", p.A), ("k", p.k), ("sigma", p.sigma)):
+            errors[name].append(abs(value / truth[name] - 1))
+    checks: list[Check] = []
+    for name, errs in errors.items():
+        arr = np.array(errs)
+        med = float(np.median(arr))
+        share = float(np.mean(arr <= 0.10))
+        case = f"{name}={truth[name]:g}, {synth.paths} seeds"
+        checks.append(Check("AC-W-10", case, "median_abs_rel_error", med, 0.05, None, None,
+                            "<= 5%", med <= 0.05))  # fmt: skip
+        checks.append(Check("AC-W-10", case, "share_within_10pct", share, 0.95, None, None,
+                            ">= 95%", share >= 0.95))  # fmt: skip
+    return checks
+
+
 # ---- AC-W-03 and AC-W-14 ---------------------------------------------------------------
 
 
@@ -558,6 +594,7 @@ def run_validation(
     ce_checks, fig_ce = check_glft_ce(paths, fast)
     checks += ce_checks
     checks += check_asymptotic()
+    checks += check_calibration(paths)
     checks = mark_exceptions(checks, load_exceptions(paths.repo_root))
     return checks, {"intensity": fig_int, "as2008": fig_as, "glft_ce": fig_ce}
 

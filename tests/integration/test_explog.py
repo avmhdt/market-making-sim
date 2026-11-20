@@ -87,15 +87,11 @@ def test_overfitlab_validates_the_log(tmp_path: Path) -> None:
     assert rows[3]["x_periods_per_year"] == "252"
 
 
-def test_committed_trial_log_validates() -> None:
-    result = CliRunner().invoke(
-        overfitlab_app,
-        [
-            "trials",
-            "validate",
-            str(REPO / "results" / "trial_log.csv"),
-        ],
-    )
+def test_committed_trial_log_validates(tmp_path: Path) -> None:
+    """The CSV checks, as on a fresh clone (the run folders live in WSL ext4)."""
+    copy = tmp_path / "trial_log.csv"
+    copy.write_bytes((REPO / "results" / "trial_log.csv").read_bytes())
+    result = CliRunner().invoke(overfitlab_app, ["trials", "validate", str(copy)])
     assert result.exit_code == 0, result.output
 
 

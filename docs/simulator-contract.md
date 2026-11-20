@@ -26,7 +26,11 @@ The replay (`mmsim.data.replay`) feeds every backend the same stream:
 4. A book_l2 batch (one venue message) is applied atomically and never split; a snapshot batch replaces the book.
 5. Replay starts at the first snapshot batch; earlier events are dropped and counted.
 
-On a sequence gap the simulator cancels every resting quote, stops quoting until the next snapshot, and excludes the interval from markouts (DQ-03, M3).
+### Real days (crypto-lob-alpha recordings)
+
+- **Start.** A recorded day contains no snapshot batch unless the feed reconnected, so each day starts at its first live-verified checkpoint (`checkpoints` / `checkpoint_levels`, a REST L2 snapshot written about every 600 s and checked against the live book). It is applied as a snapshot batch. Book batches with `seq` at or below the checkpoint's and trades received before it are dropped and counted, so up to about ten minutes at the start of a day are not replayed.
+- **Gaps (DQ-03).** The gap log's book and trades intervals (reason `clock` excluded, since crypto-lob-alpha does not count it as downtime) are merged. When the strategy's clock enters a gap, the runner cancels every quote and stops quoting until the gap ends. The recorder resyncs with a snapshot batch after a reconnect. Markouts whose horizon lands in a gap are invalid. Sequence discontinuities are taken from the gap log, which the recorder writes when it detects them.
+- **Day validity.** `sessions.parquet` records each day's gap share (DQ-10: under 5%) and crossed-book share (DQ-04: at most 0.01% of book events). Days failing either are excluded from robustness tables and listed in `reports/tables/excluded_days.csv`.
 
 ## One timeline
 

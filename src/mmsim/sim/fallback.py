@@ -58,6 +58,7 @@ class SimStats:
     """Counters reported in ``metrics.json``."""
 
     market_events: int = 0
+    book_events: int = 0
     crossed_book_events: int = 0
     side0_trades: int = 0
     orders_submitted: int = 0
@@ -301,6 +302,7 @@ class FallbackSimulator:
             self._trade(event, t)
 
     def _book_batch(self, event: BookBatchEvent, t: int) -> None:
+        self.stats.book_events += 1
         changes = self._book.apply(event.side, event.price_ticks, event.qty_lots, event.is_snapshot)
         for side, price, old, new in changes:
             traded = self._traded.pop((side, price), 0)

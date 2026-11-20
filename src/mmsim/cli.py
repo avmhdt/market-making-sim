@@ -108,7 +108,17 @@ def data_funding(
     end: Annotated[str, typer.Option(help="Last UTC day.")],
 ) -> None:
     """Download Binance USD-M funding history (public REST)."""
-    _not_yet("M3")
+    from mmsim.data.funding import download_funding
+
+    settings = get_settings()
+    s, e = _day(start), _day(end)
+    assert s is not None and e is not None
+    for sym in symbol:
+        frame = download_funding(
+            sym, s.date(), e.date(), raw_root=settings.raw_root,
+            processed_root=check_data_location(settings.processed_root),
+        )  # fmt: skip
+        typer.echo(f"{sym}: {frame.height} settlements")
 
 
 @data_app.command("ingest-lobster")
@@ -140,8 +150,16 @@ def calibrate(
     symbol: Annotated[str, typer.Option(help="Symbol.")],
     date_: Annotated[str, typer.Option("--date", help="UTC day.")],
 ) -> None:
-    """Fit A, k and sigma for one symbol-day (FR-12)."""
-    _not_yet("M3")
+    """Fit A, k and sigma for one symbol-day (FR-12): calib.parquet and a fit figure."""
+    from mmsim.reporting.calibration import calibrate_day
+
+    settings = get_settings()
+    d = _day(date_)
+    assert d is not None
+    out = calibrate_day(config, symbol, d.date(), settings=settings)
+    typer.echo(f"{symbol} {d.date()}: {out.fits} fits, {out.accepted} accepted -> {out.path}")
+    if out.accepted:
+        typer.echo(f"  median A {out.A:.4g}/s, k {out.k:.4g}/price, sigma {out.sigma:.4g}/sqrt(s)")
 
 
 @app.command("run")
@@ -253,12 +271,39 @@ def rl_eval(
     _not_yet("M6")
 
 
+REPORTS = ("all", "synthetic", "pnl", "markouts")
+
+
 @app.command("report")
 def report(
     name: Annotated[str, typer.Argument(help="all | synthetic | pnl | markouts | ...")],
+    no_run: Annotated[
+        bool, typer.Option("--no-run", help="Fail instead of running missing runs.")
+    ] = False,
 ) -> None:
-    """Regenerate figures and tables (FR-26)."""
-    _not_yet("M2 (synthetic), M3 (pnl, markouts) and later")
+    """Regenerate figures and tables from run outputs (FR-26)."""
+    from mmsim.reporting.report import ensure_runs, markouts_report, pnl_report
+
+    if name not in REPORTS:
+        _not_yet("M4 or later (only all, synthetic, pnl and markouts exist so far)")
+    settings = get_settings()
+    if name in ("all", "synthetic"):
+        from mmsim.validate import ValidationPaths, run_validation, write_report
+
+        paths = ValidationPaths(Path(), settings.mms_results_dir,
+                                settings.mms_results_dir / "trial_log.csv",
+                                settings.mms_reports_dir)  # fmt: skip
+        checks, figure = run_validation(False, settings=settings, paths=paths)
+        write_report(checks, figure, settings.mms_reports_dir)
+        typer.echo("synthetic: reports/tables/synthetic_validation.csv")
+    if name in ("all", "pnl", "markouts"):
+        refs = ensure_runs("first_decomposition", settings=settings, run_missing=not no_run)
+        if name in ("all", "pnl"):
+            pnl_report(refs, settings.mms_reports_dir)
+            typer.echo("pnl: reports/tables/pnl_decomposition.csv")
+        if name in ("all", "markouts"):
+            markouts_report(refs, settings.mms_reports_dir)
+            typer.echo("markouts: reports/tables/markouts.csv")
 
 
 @explog_app.command("summary")
