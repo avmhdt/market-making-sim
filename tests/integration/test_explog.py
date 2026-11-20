@@ -228,3 +228,25 @@ def test_log_changes_do_not_mark_later_rows_dirty(tmp_path: Path) -> None:
     (tmp_path / "code.py").write_text("x = 2\n", encoding="utf-8")
     third = append_failed(log, run_id=new_run_id(), strategy_family="glft", params={})
     assert third["git_sha"].endswith("-dirty")
+
+
+def test_runs_folder_may_be_a_symlink(tmp_path: Path) -> None:
+    """results/runs links to $DATA_ROOT/runs on WSL (section 7(d))."""
+    results = tmp_path / "results"
+    results.mkdir()
+    target = tmp_path / "elsewhere" / "runs"
+    target.mkdir(parents=True)
+    try:
+        (results / "runs").symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not permitted here")
+    row = _dummy_run(results)
+    assert row["returns_path"] == f"runs/{row['run_id']}/returns.parquet"
+    assert (target / row["run_id"] / "returns.parquet").exists()
+
+
+def test_start_sha_is_recorded(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    row = append_failed(results / "trial_log.csv", run_id=new_run_id(), strategy_family="glft",
+                        params={}, sha="a" * 40)  # fmt: skip
+    assert row["git_sha"] == "a" * 40

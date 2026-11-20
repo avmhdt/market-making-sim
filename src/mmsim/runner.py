@@ -48,7 +48,7 @@ from mmsim.data.replay import (
     to_ticks,
 )
 from mmsim.data.synth import generate_path
-from mmsim.explog import append_failed, append_trial, periods_per_year
+from mmsim.explog import append_failed, append_trial, git_sha, periods_per_year
 from mmsim.io.parquet import partition_dir, write_parquet
 from mmsim.io.runlog import ColumnLog, RunDir
 from mmsim.models.calibration import CalibratedParams, RollingCalibrator
@@ -411,6 +411,7 @@ def finish_run(
     capital: float,
     metrics: dict[str, Any],
     selected: bool = False,
+    sha: str | None = None,
 ) -> dict[str, str]:
     """Write ``returns.parquet`` and ``metrics.json``, then append the trial row."""
     if not dates:
@@ -426,6 +427,7 @@ def finish_run(
         end=dates[-1],
         returns_path=run.returns_path,
         selected=selected,
+        sha=sha,
     )
 
 
@@ -438,6 +440,7 @@ def fail_run(
     error: str,
     start: date | None = None,
     end: date | None = None,
+    sha: str | None = None,
 ) -> dict[str, str]:
     """Record a failed run: ``metrics.json`` with the error, and an ``n_obs = 0`` row."""
     run.write_metrics({"status": "failed", "error": error})
@@ -448,6 +451,7 @@ def fail_run(
         params=params,
         start=start,
         end=end,
+        sha=sha,
     )
 
 
@@ -540,12 +544,18 @@ def build_sessions(cfg: MmsConfig, settings: Settings, repo_root: Path) -> list[
         ckpt = load_checkpoint(root, data.venue, symbol, day)
         start_event = None
         if ckpt is not None:
+            # Rare off-grid levels (M3-11) are dropped from the snapshot as from the stream.
+            scaled = ckpt.levels["price"].to_numpy() / inst.tick_size
+            on_grid = np.abs(scaled - np.rint(scaled)) < 1e-6
+            if (~on_grid).sum() > 1e-3 * on_grid.size:
+                raise ValueError(f"{symbol} {day}: checkpoint prices off the tick grid")
+            levels = ckpt.levels.filter(pl.Series(on_grid))
             start_event = BookBatchEvent(
                 ts_match=ckpt.ts_recv, ts_exchange=ckpt.ts_recv, ts_recv=ckpt.ts_recv,
                 batch_id=ckpt.batch_id, seq=ckpt.seq, is_snapshot=True,
-                side=ckpt.levels["side"].to_numpy().astype(np.int8),
-                price_ticks=to_ticks(ckpt.levels["price"].to_numpy(), inst.tick_size),
-                qty_lots=to_lots(ckpt.levels["qty"].to_numpy(), inst.lot_size),
+                side=levels["side"].to_numpy().astype(np.int8),
+                price_ticks=to_ticks(levels["price"].to_numpy(), inst.tick_size),
+                qty_lots=to_lots(levels["qty"].to_numpy(), inst.lot_size),
             )  # fmt: skip
         elif data.source == "cla":
             raise ValueError(f"{symbol} {day}: no live-verified checkpoint to start from")
@@ -724,11 +734,14 @@ def execute_run(
     if resolved is not None:
         run.write_config(resolved, settings.redacted())
     started = time.perf_counter()
+    sha = git_sha(log_path)  # the code the run starts from, not the repo when it ends
     try:
-        outcome = _execute(cfg, settings, repo_root, run, family, params, log_path, policy_factory)
+        outcome = _execute(
+            cfg, settings, repo_root, run, family, params, log_path, policy_factory, sha
+        )
     except Exception as exc:
         fail_run(run, explog_path=log_path, strategy_family=family, params=params,
-                 error=f"{type(exc).__name__}: {exc}")  # fmt: skip
+                 error=f"{type(exc).__name__}: {exc}", sha=sha)  # fmt: skip
         raise
     outcome.metrics["runtime_s"] = time.perf_counter() - started
     outcome.metrics["peak_rss_mb"] = _peak_rss_mb()
@@ -745,6 +758,7 @@ def _execute(
     params: dict[str, object],
     log_path: Path,
     policy_factory: Callable[[InstrumentSpec, int], QuotePolicy] | None,
+    sha: str | None = None,
 ) -> RunOutcome:
     st = cfg.strategy
     if st.family == "rl":
@@ -919,7 +933,7 @@ def _execute(
     }
     row = finish_run(run, explog_path=log_path, strategy_family=family, params=params,
                      dates=dates, pnl_quote=pnl, capital=cfg.analysis.capital_usd,
-                     metrics=metrics)  # fmt: skip
+                     metrics=metrics, sha=sha)  # fmt: skip
     return RunOutcome(run=run, row=row, metrics=metrics, breakdowns=breakdowns, logs=logs)
 
 
