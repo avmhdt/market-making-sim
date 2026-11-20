@@ -25,4 +25,8 @@ Footer counts of crypto-lob-alpha's capture for 2026-11-08 (`mms data check`):
 | ETHUSDT | 58,687,569 | 898,975 |
 | SOLUSDT | 16,786,270 | 247,161 |
 
-On-disk size per symbol-day is about 170 MB of zstd Parquet for BTCUSDT book_l2 (24 hourly files of about 7 MB).
+On-disk size per symbol-day is about 170 MB of zstd Parquet for BTCUSDT book_l2 (24 hourly files of about 7 MB) on 2026-11-08; busier days reach 146M book rows (`mms data check` over 2026-11-02 to 11-19, 48 symbol-days, 0 problems).
+
+The decoded event cache (`$DATA_ROOT/interim/events`, docs/decisions.md M3-10) takes about 1.3 GB per BTCUSDT day, 1.1 GB per ETHUSDT day and 0.26 GB per SOLUSDT day: 13 GB for the 15 tuning symbol-days.
+
+Since 2026-11-17 the repository and the WSL distro live on G: (`G:\WSL\Ubuntu`); D: was failing.
