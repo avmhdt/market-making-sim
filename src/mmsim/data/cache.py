@@ -122,8 +122,8 @@ def iter_cache(directory: Path) -> Iterator[MarketEvent]:
         meta = z["book_meta"]
         offsets = z["book_offsets"]
         side = z["book_side"]
-        px = z["book_px"].astype(I64)
-        qty = z["book_qty"].astype(I64)
+        px = z["book_px"]  # int32 when it fits: no int64 copies of a whole day (NFR-12)
+        qty = z["book_qty"]
         trades = z["trades"]
     meta_l = meta.tolist()
     trades_l = trades.tolist()

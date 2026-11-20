@@ -282,7 +282,12 @@ def report(
     ] = False,
 ) -> None:
     """Regenerate figures and tables from run outputs (FR-26)."""
-    from mmsim.reporting.report import ensure_runs, markouts_report, pnl_report
+    from mmsim.reporting.report import (
+        calibration_report,
+        ensure_runs,
+        markouts_report,
+        pnl_report,
+    )
 
     if name not in REPORTS:
         _not_yet("M4 or later (only all, synthetic, pnl and markouts exist so far)")
@@ -300,7 +305,8 @@ def report(
         refs = ensure_runs("first_decomposition", settings=settings, run_missing=not no_run)
         if name in ("all", "pnl"):
             pnl_report(refs, settings.mms_reports_dir)
-            typer.echo("pnl: reports/tables/pnl_decomposition.csv")
+            calibration_report(refs, settings.mms_reports_dir)
+            typer.echo("pnl: reports/tables/pnl_decomposition.csv, calibration_summary.csv")
         if name in ("all", "markouts"):
             markouts_report(refs, settings.mms_reports_dir)
             typer.echo("markouts: reports/tables/markouts.csv")

@@ -24,7 +24,14 @@ from mmsim.explog import canonical_json, read_log
 from mmsim.runner import execute_run, run_params
 from mmsim.settings import Settings
 
-__all__ = ["RunRef", "ensure_runs", "markouts_report", "pnl_report", "write_table"]
+__all__ = [
+    "RunRef",
+    "calibration_report",
+    "ensure_runs",
+    "markouts_report",
+    "pnl_report",
+    "write_table",
+]
 
 COMPONENTS = ("spread", "adverse_selection", "inventory_residual", "fees", "funding")
 
@@ -172,6 +179,39 @@ def markouts_report(refs: Sequence[RunRef], reports_dir: Path) -> pl.DataFrame:
     for symbol in sorted(table["symbol"].unique().to_list()):
         _markout_figure(table.filter(pl.col("symbol") == symbol), symbol,
                         reports_dir / "figures" / f"markouts_{symbol}.png")  # fmt: skip
+    return table
+
+
+def calibration_report(refs: Sequence[RunRef], reports_dir: Path) -> pl.DataFrame:
+    """Per symbol-day rolling-fit summary (FR-12) from the runs' ``calib.parquet``.
+
+    The fits do not depend on the policy, so one run per symbol is enough.
+    """
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for ref in refs:
+        path = ref.path / "calib.parquet"
+        if ref.symbol in seen or not path.exists():
+            continue
+        seen.add(ref.symbol)
+        fits = pl.read_parquet(path)
+        for (day,), g in fits.group_by("day", maintain_order=True):
+            ok = g.filter(pl.col("accepted"))
+
+            def q(col: str, p: float, frame: pl.DataFrame = ok) -> float:
+                v = frame[col].to_numpy()
+                return float(np.quantile(v, p)) if v.size else float("nan")
+
+            rows.append({
+                "symbol": ref.symbol, "day": str(day), "fits": g.height, "accepted": ok.height,
+                "accepted_share": ok.height / g.height if g.height else float("nan"),
+                "A_median": q("A", 0.5), "A_p10": q("A", 0.1), "A_p90": q("A", 0.9),
+                "k_median": q("k", 0.5), "k_p10": q("k", 0.1), "k_p90": q("k", 0.9),
+                "sigma_median": q("sigma", 0.5), "r2_median": q("r2", 0.5),
+                "orders_per_window_median": q("n_orders", 0.5),
+            })  # fmt: skip
+    table = pl.DataFrame(rows)
+    write_table(table, reports_dir, "calibration_summary")
     return table
 
 
