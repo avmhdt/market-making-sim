@@ -1,1 +1,5 @@
-# Placeholder from M1 (spec section 6); filled in by M3.
+# Avellaneda-Stoikov (2008) quotes (FR-09) with the rolling tau = horizon_s of the spec's
+# defaults (24/7 market). Same data, calibration and simulator settings as glft.yaml.
+run: {name: as, seed: 7}
+data: {start: 2026-11-02, end: 2026-11-06, symbols: [BTCUSDT]}
+strategy: {family: as, tau_mode: rolling}

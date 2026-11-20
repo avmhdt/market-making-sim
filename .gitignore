@@ -42,9 +42,10 @@ Thumbs.db
 SPEC.html
 
 # Run outputs (results/runs and results/rl are symlinks to $DATA_ROOT on WSL)
-results/runs/
-results/rl/
+results/runs
+results/rl
 reports/**/*.html
 *.lock
 !uv.lock
 .coverage*
+configs/strategies/_probe_*.yaml

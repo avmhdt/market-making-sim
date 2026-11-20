@@ -1,0 +1,5 @@
+# Runs behind the report tables and figures (FR-26). `mms report <name>` finds the latest
+# successful trial with exactly these parameters and reruns it when it is missing.
+first_decomposition:
+  configs: [configs/strategies/glft.yaml, configs/strategies/as.yaml]
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT]

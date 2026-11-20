@@ -48,7 +48,6 @@ def test_every_command_has_help(command: list[str]) -> None:
 @pytest.mark.parametrize(
     "args",
     [
-        ["data", "funding", "--symbol", "BTCUSDT", "--start", "2026-11-01", "--end", "2026-11-02"],
         ["data", "ingest-lobster", "--src", "x", "--ticker", "AAPL", "--date", "2012-06-21"],
         [
             "data",
@@ -62,13 +61,12 @@ def test_every_command_has_help(command: list[str]) -> None:
             "--end",
             "b",
         ],
-        ["calibrate", "--config", "x", "--symbol", "BTCUSDT", "--date", "2026-11-02"],
         ["sweep", "--config", "x"],
         ["validate", "signal-parity", "--model-dir", "x"],
         ["validate", "sim-parity", "--config", "x"],
         ["rl", "train", "--algo", "ppo", "--config", "x", "--seed", "1"],
         ["rl", "eval", "--run-id", "x", "--split", "val"],
-        ["report", "all"],
+        ["report", "rl"],
     ],
 )
 def test_future_commands_exit_2(args: list[str]) -> None:

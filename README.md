@@ -2,7 +2,7 @@
 
 > Optimal quoting under inventory risk, tested on replayed order books, with P&L broken down to its sources.
 
-**Status:** in progress (M1 of 7: scaffolding, contracts and data access)
+**Status:** in progress (M3 of 7: real data, calibration and the first P&L decomposition)
 
 | | |
 |---|---|
@@ -14,8 +14,8 @@
 
 ## Requirements
 
-- [ ] Avellaneda–Stoikov (2008) and Guéant–Lehalle–Fernandez-Tapia (2013) quoting with inventory limits.
-- [ ] Parameters estimated from data: order-arrival intensity by distance from mid, volatility, fee tiers.
+- [x] Avellaneda–Stoikov (2008) and Guéant–Lehalle–Fernandez-Tapia (2013) quoting with inventory limits. (FR-09, FR-10, FR-11; AC-W-02, AC-W-03, AC-W-05, AC-W-14)
+- [x] Parameters estimated from data: order-arrival intensity by distance from mid, volatility, fee tiers. (FR-08, FR-12; AC-W-10)
 - [ ] Simulation with queue position and latency (reuse [event-driven-backtester](https://github.com/avmhdt/event-driven-backtester)).
 - [ ] P&L decomposition: spread capture, inventory P&L, adverse selection via markouts at several horizons, and fees and rebates.
 - [ ] Quotes skewed by your short-horizon signal from [crypto-lob-alpha](https://github.com/avmhdt/crypto-lob-alpha).
@@ -36,8 +36,8 @@ Raw and licensed data live in `data/`, which is git-ignored. Only download scrip
 
 ### Works (correct and reproducible)
 
-- [ ] In the synthetic Poisson world, simulated results match the analytic model.
-- [ ] Inventory stays within limits, and the P&L components sum exactly to total P&L.
+- [x] In the synthetic Poisson world, simulated results match the analytic model. (AC-W-01 to AC-W-04; AC-W-02 with the documented exception M2-20)
+- [x] Inventory stays within limits, and the P&L components sum exactly to total P&L. (AC-W-05, AC-W-06, on synthetic and recorded runs)
 
 ### Impresses hirers
 

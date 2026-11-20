@@ -49,6 +49,7 @@ class AnalyticPolicy:
     horizon_s: float
     tau_mode: str = "rolling"
     maker_bps: float = 0.0
+    lot_size: float = 1.0
     name: str = ""
     _exact_cache: dict[tuple[float, float, float], GLFTExact] = field(default_factory=dict)
 
@@ -74,26 +75,36 @@ class AnalyticPolicy:
         return sol
 
     def decide(self, state: StrategyState) -> QuoteDecision:
-        """Quotes for the current state."""
+        """Quotes for the current state.
+
+        The models count inventory in quote units of ``m = quote_lots * lot_size`` base
+        units, so prices, volatility, ``k`` and the fee are moved to that unit first
+        (``sigma_u = m sigma``, ``k_u = k / m``, ``c_u = m c``) and the distances back to
+        price per base unit afterwards (docs/models.md). With ``m = 1`` nothing changes.
+        """
         p = state.params
+        m = self.quote_lots * self.lot_size
         mid = state.book.mid_x2 * self.tick_size / 2.0
         q = state.inventory_lots / self.quote_lots
-        fee = self.maker_bps / 1e4 * mid
+        fee_u = self.maker_bps / 1e4 * mid * m
+        sigma_u, k_u, mid_u = p.sigma * m, p.k / m, mid * m
         if self.family == "as":
-            bid_px, ask_px = as_quotes(mid, q, self._tau(state), self.gamma, p.sigma, p.k)
-            d_bid: float | None = mid - bid_px + fee
-            d_ask: float | None = ask_px - mid + fee
+            bid_u, ask_u = as_quotes(mid_u, q, self._tau(state), self.gamma, sigma_u, k_u)
+            d_bid: float | None = mid_u - bid_u + fee_u
+            d_ask: float | None = ask_u - mid_u + fee_u
         elif self.family == "glft":
-            d_bid, d_ask = glft_asymptotic(q, self.gamma, p.sigma, with_fee(p.A, p.k, fee), p.k)
-            d_bid += fee
-            d_ask += fee
+            d_bid, d_ask = glft_asymptotic(q, self.gamma, sigma_u, with_fee(p.A, k_u, fee_u), k_u)
+            d_bid += fee_u
+            d_ask += fee_u
         else:
-            sol = self._exact(with_fee(p.A, p.k, fee), p.k, p.sigma)
+            sol = self._exact(with_fee(p.A, k_u, fee_u), k_u, sigma_u)
             t = 0.0 if self.tau_mode == "rolling" else self.horizon_s - self._tau(state)
             q_int = max(-self.q_max_units, min(self.q_max_units, round(q)))
             d_bid, d_ask = sol.deltas(min(max(t, 0.0), self.horizon_s), q_int)
-            d_bid = None if d_bid is None else d_bid + fee
-            d_ask = None if d_ask is None else d_ask + fee
+            d_bid = None if d_bid is None else d_bid + fee_u
+            d_ask = None if d_ask is None else d_ask + fee_u
+        d_bid = None if d_bid is None else d_bid / m
+        d_ask = None if d_ask is None else d_ask / m
         bid, ask = distances_to_ticks(state, self.tick_size, d_bid, d_ask)
         return QuoteDecision(bid, ask, self.quote_lots, self.quote_lots)
 

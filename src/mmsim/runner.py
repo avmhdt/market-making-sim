@@ -13,6 +13,7 @@ import json
 import math
 import platform
 import statistics
+import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
@@ -26,14 +27,31 @@ import polars as pl
 from mmsim.analytics.markouts import markout_summary, markout_table
 from mmsim.analytics.pnl import NS_PER_MS, PnLBreakdown, attribution_table, decompose_pnl, mid_asof
 from mmsim.config import MmsConfig, load_synth_config, resolve_dict
+from mmsim.data.cache import build_cache, cache_is_fresh, iter_cache
+from mmsim.data.funding import load_funding
 from mmsim.data.instruments import FeeCoverageError, load_fee_rows, resolve_instrument
-from mmsim.data.loaders import day_files, iter_row_groups, list_days, read_files
-from mmsim.data.replay import MarketEvent, replay
+from mmsim.data.loaders import (
+    day_files,
+    gap_intervals,
+    iter_row_groups,
+    list_days,
+    load_checkpoint,
+    load_gaps,
+    read_files,
+)
+from mmsim.data.replay import (
+    BookBatchEvent,
+    MarketEvent,
+    ReplayStats,
+    replay,
+    to_lots,
+    to_ticks,
+)
 from mmsim.data.synth import generate_path
-from mmsim.explog import append_failed, append_trial, periods_per_year
-from mmsim.io.parquet import write_parquet
-from mmsim.io.runlog import RunDir
-from mmsim.models.calibration import CalibratedParams
+from mmsim.explog import append_failed, append_trial, git_sha, periods_per_year
+from mmsim.io.parquet import partition_dir, write_parquet
+from mmsim.io.runlog import ColumnLog, RunDir
+from mmsim.models.calibration import CalibratedParams, RollingCalibrator
 from mmsim.settings import Settings
 from mmsim.sim.latency import median_feed_latency_ns
 from mmsim.sim.protocol import MarketSimulator
@@ -54,6 +72,7 @@ __all__ = [
     "fail_run",
     "finish_run",
     "resolved_config",
+    "run_params",
     "run_session",
     "session_frames",
 ]
@@ -105,6 +124,11 @@ class Session:
     seed: int
     timer_start_ns: int | None = None
     """First decision time; ``None`` starts at the first market event."""
+    gaps: list[tuple[int, int]] = field(default_factory=list)
+    """Merged gap-log intervals (DQ-03): quotes are cancelled and quoting pauses."""
+    note: str = ""
+    cache_dir: Path | None = None
+    """Decoded event cache, whose meta.json holds the replay counters."""
 
 
 @dataclass
@@ -112,9 +136,9 @@ class SessionLog:
     """Everything one session produced."""
 
     session: Session
-    orders: list[dict[str, Any]] = field(default_factory=list)
+    orders: ColumnLog = field(default_factory=lambda: ColumnLog(ORDER_SCHEMA))
     fills: list[Fill] = field(default_factory=list)
-    quotes: list[dict[str, Any]] = field(default_factory=list)
+    quotes: ColumnLog = field(default_factory=lambda: ColumnLog(QUOTE_SCHEMA))
     mids: list[tuple[int, int, int]] = field(default_factory=list)
     positions_after: list[int] = field(default_factory=list)
     max_abs_inventory_lots: int = 0
@@ -123,6 +147,7 @@ class SessionLog:
     decisions: int = 0
     q_max_lots: int = 0
     quote_lots: int = 0
+    gap_pauses: int = 0
     sim_stats: dict[str, int] = field(default_factory=dict)
 
 
@@ -174,6 +199,8 @@ def run_session(
     policy: QuotePolicy | None = None
     position = 0
     last_t = first
+    gap_i = 0
+    paused = False
     quoting = False
     order_info: dict[int, tuple[int, int]] = {}
     while (step := sim.step()) is not None:
@@ -185,6 +212,17 @@ def run_session(
         if quoting:
             log.quoting_ns += span
         last_t = step.ts_local
+        while gap_i < len(session.gaps) and session.gaps[gap_i][1] <= step.ts_local:
+            gap_i += 1
+        in_gap = gap_i < len(session.gaps) and session.gaps[gap_i][0] <= step.ts_local
+        if in_gap:
+            if not paused:
+                sim.cancel_all(inst.symbol)
+                paused = True
+                quoting = False
+                log.gap_pauses += 1
+        elif paused:
+            paused = False
         params.update(step)
         for update in step.order_updates:
             _log_update(log, update, order_info)
@@ -200,7 +238,7 @@ def run_session(
             )  # fmt: skip
         if step.book is not None:
             book = step.book
-        if not (step.timer or step.fills) or book is None:
+        if paused or not (step.timer or step.fills) or book is None:
             continue
         if not book.bid_ticks or not book.ask_ticks:
             continue
@@ -302,7 +340,7 @@ FILL_SCHEMA = {
     "mid_x2_before": pl.Int64,
     "position_after_lots": pl.Int64,
 }
-ORDER_SCHEMA = {
+ORDER_SCHEMA: dict[str, Any] = {
     "ts_local": pl.Int64,
     "ts_exchange": pl.Int64,
     "order_id": pl.Int64,
@@ -312,7 +350,7 @@ ORDER_SCHEMA = {
     "qty_lots": pl.Int64,
     "reason": pl.String,
 }
-QUOTE_SCHEMA = {
+QUOTE_SCHEMA: dict[str, Any] = {
     "ts_local": pl.Int64,
     "bid_ticks": pl.Int64,
     "ask_ticks": pl.Int64,
@@ -353,8 +391,8 @@ def session_frames(log: SessionLog) -> dict[str, pl.DataFrame]:
     fills = fills.sort("ts_exchange", maintain_order=True)
     return {
         "fills": fills,
-        "orders": pl.DataFrame(log.orders, schema=ORDER_SCHEMA),
-        "quotes": pl.DataFrame(log.quotes, schema=QUOTE_SCHEMA),
+        "orders": log.orders.frame(),
+        "quotes": log.quotes.frame(),
         "mids": pl.DataFrame(log.mids, schema=MID_SCHEMA, orient="row"),
     }
 
@@ -373,6 +411,7 @@ def finish_run(
     capital: float,
     metrics: dict[str, Any],
     selected: bool = False,
+    sha: str | None = None,
 ) -> dict[str, str]:
     """Write ``returns.parquet`` and ``metrics.json``, then append the trial row."""
     if not dates:
@@ -388,6 +427,7 @@ def finish_run(
         end=dates[-1],
         returns_path=run.returns_path,
         selected=selected,
+        sha=sha,
     )
 
 
@@ -400,6 +440,7 @@ def fail_run(
     error: str,
     start: date | None = None,
     end: date | None = None,
+    sha: str | None = None,
 ) -> dict[str, str]:
     """Record a failed run: ``metrics.json`` with the error, and an ``n_obs = 0`` row."""
     run.write_metrics({"status": "failed", "error": error})
@@ -410,6 +451,7 @@ def fail_run(
         params=params,
         start=start,
         end=end,
+        sha=sha,
     )
 
 
@@ -429,6 +471,15 @@ def _appender(out: list[tuple[int, int, int]]) -> Callable[[int, int, int], None
         out.append((t, mid_x2, spread))
 
     return add
+
+
+def _peak_rss_mb() -> float | None:
+    """Peak resident memory of this process (Unix only)."""
+    if sys.platform == "win32":
+        return None
+    import resource
+
+    return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024
 
 
 def _session_seed(seed: int, index: int) -> int:
@@ -490,18 +541,64 @@ def build_sessions(cfg: MmsConfig, settings: Settings, repo_root: Path) -> list[
         book_files = day_files(root, "book_l2", data.venue, symbol, day)
         trade_files = day_files(root, "trades", data.venue, symbol, day)
         ts = read_files(trade_files, ["ts_exchange", "ts_recv"])
+        ckpt = load_checkpoint(root, data.venue, symbol, day)
+        start_event = None
+        if ckpt is not None:
+            # Rare off-grid levels (M3-11) are dropped from the snapshot as from the stream.
+            scaled = ckpt.levels["price"].to_numpy() / inst.tick_size
+            on_grid = np.abs(scaled - np.rint(scaled)) < 1e-6
+            if (~on_grid).sum() > 1e-3 * on_grid.size:
+                raise ValueError(f"{symbol} {day}: checkpoint prices off the tick grid")
+            levels = ckpt.levels.filter(pl.Series(on_grid))
+            start_event = BookBatchEvent(
+                ts_match=ckpt.ts_recv, ts_exchange=ckpt.ts_recv, ts_recv=ckpt.ts_recv,
+                batch_id=ckpt.batch_id, seq=ckpt.seq, is_snapshot=True,
+                side=levels["side"].to_numpy().astype(np.int8),
+                price_ticks=to_ticks(levels["price"].to_numpy(), inst.tick_size),
+                qty_lots=to_lots(levels["qty"].to_numpy(), inst.lot_size),
+            )  # fmt: skip
+        elif data.source == "cla":
+            raise ValueError(f"{symbol} {day}: no live-verified checkpoint to start from")
 
-        def day_events(
-            b: list[Path] = book_files, t: list[Path] = trade_files, s: InstrumentSpec = inst
-        ) -> Iterator[MarketEvent]:
+        def decode(
+            b: list[Path] = book_files, t: list[Path] = trade_files, s: InstrumentSpec = inst,
+            start: BookBatchEvent | None = start_event, stats: ReplayStats | None = None,
+        ) -> Iterator[MarketEvent]:  # fmt: skip
             cols_b = ["ts_exchange", "ts_recv", "seq", "side", "price", "qty", "is_snapshot",
                       "batch_id"]  # fmt: skip
             cols_t = ["ts_exchange", "ts_recv", "trade_id", "price", "qty", "side"]
             return replay(
-                iter_row_groups(b, cols_b), iter_row_groups(t, cols_t), s.tick_size, s.lot_size
+                iter_row_groups(b, cols_b), iter_row_groups(t, cols_t), s.tick_size, s.lot_size,
+                stats, start=start,
+            )  # fmt: skip
+
+        day_events: Callable[[], Iterator[MarketEvent]] = decode
+        cache_dir: Path | None = None
+        if data.source == "cla" and data.cache:
+            cache_dir = partition_dir(
+                settings.project_data_root / "interim" / "events", "events", data.venue, symbol, day
             )
+            key = {"tick": inst.tick_size, "lot": inst.lot_size,
+                   "checkpoint": None if ckpt is None else ckpt.checkpoint_id}  # fmt: skip
+            files = [*book_files, *trade_files]
+
+            def cached(
+                d: Path = cache_dir, f: list[Path] = files, k: dict[str, Any] = key,
+                dec: Callable[..., Iterator[MarketEvent]] = decode,
+            ) -> Iterator[MarketEvent]:  # fmt: skip
+                if not cache_is_fresh(d, f, k):
+                    stats = ReplayStats()
+                    build_cache(d, dec(stats=stats), f, k, stats)
+                return iter_cache(d)
+
+            day_events = cached
 
         start = (day - date(1970, 1, 1)).days * NS_PER_DAY
+        gaps = (
+            gap_intervals(load_gaps(root, data.venue, symbol, day, day))
+            if data.respect_gap_log
+            else []
+        )
         sessions.append(
             Session(
                 day=day,
@@ -513,11 +610,51 @@ def build_sessions(cfg: MmsConfig, settings: Settings, repo_root: Path) -> list[
                     median_feed_latency_ns(ts["ts_exchange"], ts["ts_recv"]) if ts.height else 0
                 ),
                 seed=_session_seed(cfg.run.seed, i),
+                gaps=[(max(a, start), min(b, start + NS_PER_DAY)) for a, b in gaps],
+                note="" if ckpt is None else f"starts at checkpoint {ckpt.checkpoint_id}",
+                cache_dir=cache_dir if data.source == "cla" and data.cache else None,
             )
         )
     if not sessions:
         raise ValueError(f"no data for {data.venue}/{symbol} in {data.start}..{data.end}")
     return sessions
+
+
+GAP_SHARE_MAX = 0.05  # DQ-10
+CROSSED_SHARE_MAX = 1e-4  # DQ-04: 0.01% of book events
+
+
+def _session_quality(session: Session, log: SessionLog) -> dict[str, Any]:
+    """Per-day data quality (DQ-03, DQ-04, DQ-10) for ``sessions.parquet``."""
+    length = session.end_ns - session.start_ns
+    gap_ns = sum(max(0, min(b, session.end_ns) - max(a, session.start_ns)) for a, b in session.gaps)
+    book = log.sim_stats.get("book_events", 0)
+    crossed = log.sim_stats.get("crossed_book_events", 0)
+    crossed_share = crossed / book if book else 0.0
+    gap_share = gap_ns / length if length > 0 else 0.0
+    reasons = []
+    if gap_share >= GAP_SHARE_MAX:
+        reasons.append(f"gap {gap_share:.2%} >= 5% (DQ-10)")
+    if crossed_share > CROSSED_SHARE_MAX:
+        reasons.append(f"crossed {crossed_share:.4%} > 0.01% (DQ-04)")
+    replay_stats: dict[str, Any] = {}
+    if session.cache_dir is not None and (session.cache_dir / "meta.json").exists():
+        meta = json.loads((session.cache_dir / "meta.json").read_text(encoding="utf-8"))
+        replay_stats = meta.get("replay_stats") or {}
+    return {
+        "day": session.day,
+        "off_grid_book_rows": int(replay_stats.get("off_grid_book_rows", 0)),
+        "dropped_before_start": int(replay_stats.get("dropped_before_snapshot", 0)),
+        "gaps": len(session.gaps),
+        "gap_s": gap_ns / NS_PER_S,
+        "gap_share": gap_share,
+        "book_events": book,
+        "crossed_book_events": crossed,
+        "crossed_share": crossed_share,
+        "valid": not reasons,
+        "reason": "; ".join(reasons),
+        "note": session.note,
+    }
 
 
 def _hourly(
@@ -556,6 +693,21 @@ def _sharpe(values: Sequence[float], periods: float) -> float | None:
     return statistics.fmean(values) / sd * math.sqrt(periods) if sd > 0 else None
 
 
+def run_params(cfg: MmsConfig, extra: dict[str, object] | None = None) -> dict[str, object]:
+    """The trial's ``params_json`` content: everything that defines the run."""
+    return {
+        "strategy": cfg.strategy.model_dump(mode="json"),
+        "sim": cfg.sim.model_dump(mode="json"),
+        "data": cfg.data.model_dump(mode="json"),
+        "calibration": cfg.calibration.model_dump(mode="json"),
+        "fees_tier": cfg.fees.tier,
+        "funding": cfg.fees.funding,
+        "seed": cfg.run.seed,
+        "backend": cfg.run.sim,
+        **(extra or {}),
+    }
+
+
 def execute_run(
     cfg: MmsConfig,
     *,
@@ -578,25 +730,21 @@ def execute_run(
     # The contract puts runs/<run_id>/ next to the log, so the log lives in the results dir.
     log_path = explog_path or (results / "trial_log.csv")
     run = RunDir.create(results)
-    params: dict[str, object] = {
-        "strategy": cfg.strategy.model_dump(mode="json"),
-        "sim": cfg.sim.model_dump(mode="json"),
-        "data": cfg.data.model_dump(mode="json"),
-        "fees_tier": cfg.fees.tier,
-        "seed": cfg.run.seed,
-        "backend": cfg.run.sim,
-        **(extra_params or {}),
-    }
+    params = run_params(cfg, extra_params)
     if resolved is not None:
         run.write_config(resolved, settings.redacted())
     started = time.perf_counter()
+    sha = git_sha(log_path)  # the code the run starts from, not the repo when it ends
     try:
-        outcome = _execute(cfg, settings, repo_root, run, family, params, log_path, policy_factory)
+        outcome = _execute(
+            cfg, settings, repo_root, run, family, params, log_path, policy_factory, sha
+        )
     except Exception as exc:
         fail_run(run, explog_path=log_path, strategy_family=family, params=params,
-                 error=f"{type(exc).__name__}: {exc}")  # fmt: skip
+                 error=f"{type(exc).__name__}: {exc}", sha=sha)  # fmt: skip
         raise
     outcome.metrics["runtime_s"] = time.perf_counter() - started
+    outcome.metrics["peak_rss_mb"] = _peak_rss_mb()
     run.write_metrics(outcome.metrics)
     return outcome
 
@@ -610,20 +758,22 @@ def _execute(
     params: dict[str, object],
     log_path: Path,
     policy_factory: Callable[[InstrumentSpec, int], QuotePolicy] | None,
+    sha: str | None = None,
 ) -> RunOutcome:
     st = cfg.strategy
     if st.family == "rl":
         raise NotImplementedError("RL policies arrive in M6")
-    if st.params is None:
-        raise NotImplementedError("calibrated parameters arrive in M3; set strategy.params")
-    provider = FixedParamsProvider(st.params.A, st.params.k, st.params.sigma)
     sessions = build_sessions(cfg, settings, repo_root)
+    calib_frames: list[pl.DataFrame] = []
     horizons = list(cfg.analysis.markout_horizons_ms)
     headline = cfg.analysis.headline_horizon_ms
     ordered = [headline, *[h for h in horizons if h != headline]]
     logs: list[SessionLog] = []
     breakdowns: list[PnLBreakdown] = []
     names = ("fills", "orders", "quotes", "mids", "attr", "mo")
+    quality: list[dict[str, Any]] = []
+    funding_rows = 0
+    mark_substituted = 0
     frames: dict[str, list[pl.DataFrame]] = {k: [] for k in names}
     daily: dict[date, float] = {}
     hourly: list[tuple[int, float]] = []
@@ -646,8 +796,16 @@ def _execute(
                 family=st.family, gamma=st.gamma, tick_size=inst.tick_size, quote_lots=lots,
                 q_max_units=st.q_max_units, horizon_s=st.horizon_s, tau_mode=st.tau_mode,
                 maker_bps=inst.maker_bps,
+                lot_size=inst.lot_size,
             )  # fmt: skip
 
+        provider: ParamsProvider
+        calibrator: RollingCalibrator | None = None
+        if st.params is not None:
+            provider = FixedParamsProvider(st.params.A, st.params.k, st.params.sigma)
+        else:
+            calibrator = RollingCalibrator(cfg.calibration, inst.tick_size)
+            provider = calibrator
         log = run_session(
             sim, session, factory, provider,
             q_max_units=st.q_max_units,
@@ -657,13 +815,43 @@ def _execute(
             mids=mids, tau_finite=st.tau_mode == "finite",
         )  # fmt: skip
         logs.append(log)
+        quality.append(_session_quality(session, log))
+        if calibrator is not None and calibrator.fits:
+            calib_frames.append(
+                calibrator.fits_frame().with_columns(pl.lit(session.day).alias("day"))
+            )
         events += log.sim_stats.get("market_events", 0)
         fr = session_frames(log)
         if fr["mids"].is_empty():
             continue
+        funding = None
+        if cfg.fees.funding and cfg.data.source == "cla":
+            funding = load_funding(
+                settings.processed_root, inst.symbol, session.start_ns, session.end_ns
+            )
+            funding_rows += funding.height
+            missing = funding["mark_price"].is_null()
+            if missing.any():
+                mids_np = fr["mids"]
+                mid_at = mid_asof(
+                    mids_np["ts_exchange"].to_numpy().astype(np.int64),
+                    mids_np["mid_x2"].to_numpy().astype(np.int64),
+                    funding["ts"].to_numpy().astype(np.int64),
+                ) * (inst.tick_size / 2.0)
+                funding = funding.with_columns(
+                    pl.when(missing).then(pl.Series(mid_at)).otherwise(pl.col("mark_price"))
+                    .alias("mark_price")
+                )  # fmt: skip
+                mark_substituted += int(missing.sum())
         bd = decompose_pnl(fr["fills"], fr["mids"], horizon_ms=headline, instrument=inst,
-                           end_ns=session.end_ns)  # fmt: skip
+                           funding=funding, end_ns=session.end_ns)  # fmt: skip
         breakdowns.append(bd)
+        quality[-1].update(
+            spread=bd.spread, adverse_selection=bd.adverse_selection,
+            inventory_residual=bd.inventory_residual, fees=bd.fees, funding=bd.funding,
+            total=bd.total, fills=fr["fills"].height,
+            volume_lots=int(fr["fills"]["qty_lots"].sum()) if fr["fills"].height else 0,
+        )  # fmt: skip
         daily[session.day] = daily.get(session.day, 0.0) + bd.total
         unit = inst.tick_size / 2.0 * inst.lot_size
         hourly.extend(_hourly(fr, session.start_ns, session.end_ns, unit))
@@ -672,10 +860,17 @@ def _execute(
         frames["attr"].append(
             attribution_table(fr["fills"], fr["mids"], horizons_ms=ordered, end_ns=session.end_ns)
         )
-        frames["mo"].append(markout_table(fr["fills"], fr["mids"], horizons, end_ns=session.end_ns))
+        frames["mo"].append(
+            markout_table(fr["fills"], fr["mids"], horizons, end_ns=session.end_ns,
+                          gaps=session.gaps)
+        )  # fmt: skip
     if not breakdowns:
         raise ValueError("no session produced a mid series")
     wall = time.perf_counter() - wall
+    if calib_frames:
+        write_parquet(pl.concat(calib_frames, how="diagonal_relaxed"), run.path / "calib.parquet")
+    sessions_df = pl.DataFrame(quality)
+    write_parquet(sessions_df, run.path / "sessions.parquet")
     outputs = {"attr": "pnl_attribution", "mo": "markouts"}
     for key in names:
         name = outputs.get(key, key)
@@ -711,7 +906,13 @@ def _execute(
         "time_at_limit_s": sum(lg.time_at_limit_ns for lg in logs) / NS_PER_S,
         "quote_uptime_s": sum(lg.quoting_ns for lg in logs) / NS_PER_S,
         "decisions": sum(lg.decisions for lg in logs),
-        "gaps_skipped": 0,
+        "gaps_skipped": int(sessions_df["gaps"].sum()),
+        "gap_s": float(sessions_df["gap_s"].sum()),
+        "gap_pauses": sum(lg.gap_pauses for lg in logs),
+        "funding_settlements": funding_rows,
+        "funding_mark_from_mid": mark_substituted,
+        "book_events": int(sessions_df["book_events"].sum()),
+        "excluded_days": sessions_df.filter(~pl.col("valid"))["day"].cast(pl.String).to_list(),
         "side0_trades": sum(lg.sim_stats.get("side0_trades", 0) for lg in logs),
         "crossed_book_events": sum(lg.sim_stats.get("crossed_book_events", 0) for lg in logs),
         "orders_submitted": sum(lg.sim_stats.get("orders_submitted", 0) for lg in logs),
@@ -732,7 +933,7 @@ def _execute(
     }
     row = finish_run(run, explog_path=log_path, strategy_family=family, params=params,
                      dates=dates, pnl_quote=pnl, capital=cfg.analysis.capital_usd,
-                     metrics=metrics)  # fmt: skip
+                     metrics=metrics, sha=sha)  # fmt: skip
     return RunOutcome(run=run, row=row, metrics=metrics, breakdowns=breakdowns, logs=logs)
 
 

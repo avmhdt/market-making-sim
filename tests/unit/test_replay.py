@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -166,3 +166,29 @@ def test_merge_streams_is_stable_for_equal_keys() -> None:
     a = TradeRowEvent(1, 1, 1, "1", 1, 1, 1)
     b = TradeRowEvent(1, 1, 1, "2", 1, 1, 1)
     assert list(merge_streams([], [a, b])) == [a, b]
+
+
+def test_restart_parts_follow_their_hour(tmp_path: Path) -> None:
+    from mmsim.io.parquet import partition_dir
+
+    d = partition_dir(tmp_path, "trades", "v", "s", date(2026, 11, 2))
+    d.mkdir(parents=True)
+    for name in ("part-21-r1.parquet", "part-21.parquet", "part-03.parquet", "part-22.parquet",
+                 "part-23.parquet.tmp", "notes.txt"):  # fmt: skip
+        (d / name).write_bytes(b"")
+    names = [p.name for p in day_files(tmp_path, "trades", "v", "s", date(2026, 11, 2))]
+    assert names == ["part-03.parquet", "part-21.parquet", "part-21-r1.parquet", "part-22.parquet"]
+
+
+def test_rare_off_grid_book_rows_are_dropped_and_counted() -> None:
+    rows: list[BookRow] = [(10, 11, 1, 1.0, 1.0, True, 1)]
+    rows += [(20 + i, 21 + i, 1, 1.0 + 0.1 * (i % 5), 1.0, False, 2 + i) for i in range(2_000)]
+    rows.append((10**7, 10**7, -1, 1.05, 1.0, False, 10**6))  # one row off the 0.1 grid
+    book = make_book(rows)
+    stats = ReplayStats()
+    events = list(book_batches(book.to_arrow().to_batches(), 0.1, 1.0, stats))
+    assert stats.off_grid_book_rows == 1
+    assert len(events) == 2_001
+    many = make_book([(10, 11, 1, 1.05, 1.0, True, 1), (11, 12, 1, 1.0, 1.0, False, 2)])
+    with pytest.raises(TickGridError):
+        list(book_batches(many.to_arrow().to_batches(), 0.1, 1.0))

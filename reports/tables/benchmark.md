@@ -1,0 +1,25 @@
+| metric | target | value | met | measured_utc | load_1m | provisional | python |
+|---|---|---|---|---|---|---|---|
+| NFR-01 events/s, synthetic 1M-event stream, GLFT | >= 50000 | 37009 | False | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-12 peak RSS MB, synthetic stream | <= 4096 | 1083 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-02 minutes per symbol-day, SOLUSDT 5 day(s), run 5dbe6d29 | <= 15 | 0.9 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-12 peak RSS MB, SOLUSDT 5 day(s), run 5dbe6d29 | <= 4096 | 2429 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| events/s real replay, SOLUSDT 5 day(s), run 5dbe6d29 | reported | 21520 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-02 minutes per symbol-day, SOLUSDT 5 day(s), run 0b1fdaef | <= 15 | 0.6 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-12 peak RSS MB, SOLUSDT 5 day(s), run 0b1fdaef | <= 4096 | 1962 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| events/s real replay, SOLUSDT 5 day(s), run 0b1fdaef | reported | 28719 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-02 minutes per symbol-day, ETHUSDT 5 day(s), run 2b2aa9c8 | <= 15 | 1.8 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-12 peak RSS MB, ETHUSDT 5 day(s), run 2b2aa9c8 | <= 4096 | 6399 | False | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| events/s real replay, ETHUSDT 5 day(s), run 2b2aa9c8 | reported | 20895 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-02 minutes per symbol-day, BTCUSDT 5 day(s), run 0f9fd6c0 | <= 15 | 2.5 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-12 peak RSS MB, BTCUSDT 5 day(s), run 0f9fd6c0 | <= 4096 | 6821 | False | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| events/s real replay, BTCUSDT 5 day(s), run 0f9fd6c0 | reported | 15400 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-02 minutes per symbol-day, ETHUSDT 5 day(s), run 53bd5471 | <= 15 | 2.1 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-12 peak RSS MB, ETHUSDT 5 day(s), run 53bd5471 | <= 4096 | 6047 | False | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| events/s real replay, ETHUSDT 5 day(s), run 53bd5471 | reported | 17645 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-02 minutes per symbol-day, BTCUSDT 5 day(s), run 49c34249 | <= 15 | 2.7 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-12 peak RSS MB, BTCUSDT 5 day(s), run 49c34249 | <= 4096 | 6463 | False | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| events/s real replay, BTCUSDT 5 day(s), run 49c34249 | reported | 14707 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-02 minutes per symbol-day, BTCUSDT 1 day(s), run e2aa0b2d | <= 15 | 1.5 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| NFR-12 peak RSS MB, BTCUSDT 1 day(s), run e2aa0b2d | <= 4096 | 2593 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |
+| events/s real replay, BTCUSDT 1 day(s), run e2aa0b2d | reported | 21776 | True | 2026-11-20T20:42Z | 10.1 | True | 3.13.16 |

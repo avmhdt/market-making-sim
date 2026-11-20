@@ -69,6 +69,8 @@ class DataConfig(_Model):
     instruments: str = "configs/instruments.yaml"
     synthetic_config: str | None = None
     paths: int | None = Field(default=None, ge=1)
+    cache: bool = True
+    """Replay recorded (``cla``) days from the decoded event cache (R-06)."""
 
     @model_validator(mode="after")
     def _window(self) -> DataConfig:

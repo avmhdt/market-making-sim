@@ -154,14 +154,15 @@ def _append_row(path: Path, row: dict[str, str]) -> None:
 
 
 def _base_row(
-    path: Path, strategy_family: str, params: dict[str, object], run_id: str
-) -> dict[str, str]:
+    path: Path, strategy_family: str, params: dict[str, object], run_id: str,
+    sha: str | None = None,
+) -> dict[str, str]:  # fmt: skip
     _check_family(strategy_family)
     uuid.UUID(run_id, version=4)
     return {
         "run_id": run_id,
         "timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "git_sha": git_sha(path),
+        "git_sha": sha if sha is not None else git_sha(path),
         "strategy_family": strategy_family,
         "params_json": canonical_json(params),
         "x_periods_per_year": str(periods_per_year(strategy_family)),
@@ -178,8 +179,13 @@ def append_trial(
     end: date,
     returns_path: Path,
     selected: bool = False,
+    sha: str | None = None,
 ) -> dict[str, str]:
     """Append one evaluated trial; ``returns_path`` is the run's ``returns.parquet``.
+
+    ``sha`` is the code version the run started from (default: the repository now).
+    ``runs/`` may be a symlink (to ``$DATA_ROOT/runs``), so the path is checked without
+    resolving links.
 
     ``n_obs`` and ``sharpe_annual`` are computed from the Parquet series, which must hold
     ``date`` and ``ret`` and match ``start``/``end``. With a single observation the Sharpe
@@ -196,8 +202,8 @@ def append_trial(
     q = periods_per_year(strategy_family)
     sd = statistics.stdev(rets) if len(rets) > 1 else 0.0
     sharpe = statistics.fmean(rets) / sd * math.sqrt(q) if sd > 0 else 0.0
-    row = _base_row(path, strategy_family, params, run_id)
-    rel = returns_path.resolve().relative_to(path.parent.resolve()).as_posix()
+    row = _base_row(path, strategy_family, params, run_id, sha)
+    rel = Path(os.path.relpath(returns_path.absolute(), path.parent.absolute())).as_posix()
     if rel != f"runs/{run_id}/returns.parquet":
         raise ValueError(f"returns_path must be runs/{run_id}/returns.parquet, got {rel}")
     row |= {
@@ -221,9 +227,10 @@ def append_failed(
     params: dict[str, object],
     start: date | None = None,
     end: date | None = None,
+    sha: str | None = None,
 ) -> dict[str, str]:
     """Append a failed or aborted run: ``n_obs = 0``, no Sharpe, no series. It counts in N."""
-    row = _base_row(path, strategy_family, params, run_id)
+    row = _base_row(path, strategy_family, params, run_id, sha)
     row |= {
         "start": start.isoformat() if start else "",
         "end": end.isoformat() if end else "",
