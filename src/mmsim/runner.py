@@ -50,7 +50,7 @@ from mmsim.data.replay import (
 from mmsim.data.synth import generate_path
 from mmsim.explog import append_failed, append_trial, periods_per_year
 from mmsim.io.parquet import partition_dir, write_parquet
-from mmsim.io.runlog import RunDir
+from mmsim.io.runlog import ColumnLog, RunDir
 from mmsim.models.calibration import CalibratedParams, RollingCalibrator
 from mmsim.settings import Settings
 from mmsim.sim.latency import median_feed_latency_ns
@@ -134,9 +134,9 @@ class SessionLog:
     """Everything one session produced."""
 
     session: Session
-    orders: list[dict[str, Any]] = field(default_factory=list)
+    orders: ColumnLog = field(default_factory=lambda: ColumnLog(ORDER_SCHEMA))
     fills: list[Fill] = field(default_factory=list)
-    quotes: list[dict[str, Any]] = field(default_factory=list)
+    quotes: ColumnLog = field(default_factory=lambda: ColumnLog(QUOTE_SCHEMA))
     mids: list[tuple[int, int, int]] = field(default_factory=list)
     positions_after: list[int] = field(default_factory=list)
     max_abs_inventory_lots: int = 0
@@ -338,7 +338,7 @@ FILL_SCHEMA = {
     "mid_x2_before": pl.Int64,
     "position_after_lots": pl.Int64,
 }
-ORDER_SCHEMA = {
+ORDER_SCHEMA: dict[str, Any] = {
     "ts_local": pl.Int64,
     "ts_exchange": pl.Int64,
     "order_id": pl.Int64,
@@ -348,7 +348,7 @@ ORDER_SCHEMA = {
     "qty_lots": pl.Int64,
     "reason": pl.String,
 }
-QUOTE_SCHEMA = {
+QUOTE_SCHEMA: dict[str, Any] = {
     "ts_local": pl.Int64,
     "bid_ticks": pl.Int64,
     "ask_ticks": pl.Int64,
@@ -389,8 +389,8 @@ def session_frames(log: SessionLog) -> dict[str, pl.DataFrame]:
     fills = fills.sort("ts_exchange", maintain_order=True)
     return {
         "fills": fills,
-        "orders": pl.DataFrame(log.orders, schema=ORDER_SCHEMA),
-        "quotes": pl.DataFrame(log.quotes, schema=QUOTE_SCHEMA),
+        "orders": log.orders.frame(),
+        "quotes": log.quotes.frame(),
         "mids": pl.DataFrame(log.mids, schema=MID_SCHEMA, orient="row"),
     }
 

@@ -10,18 +10,20 @@ from __future__ import annotations
 import itertools
 import json
 import math
+from array import array
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import polars as pl
 import yaml
 
 from mmsim.explog import new_run_id
 from mmsim.io.parquet import write_parquet
 
-__all__ = ["LF", "METRICS_SCHEMA", "RUNTIME_FIELDS", "RunDir", "normalized_metrics"]
+__all__ = ["LF", "METRICS_SCHEMA", "RUNTIME_FIELDS", "ColumnLog", "RunDir", "normalized_metrics"]
 
 LF = "\n"
 """Line ending for every text output, so files match across operating systems."""
@@ -91,3 +93,56 @@ def normalized_metrics(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(data, dict)
     return {key: value for key, value in data.items() if key not in RUNTIME_FIELDS}
+
+
+INT_NULL = -(2**63)
+
+
+class ColumnLog:
+    """Append-only rows stored column by column in typed arrays (8 bytes a value).
+
+    A day can log about a million decisions and more order events; a dict per row would
+    need several GB. Integer nulls use a sentinel, float nulls NaN; both become nulls in
+    :meth:`frame`.
+    """
+
+    def __init__(self, schema: dict[str, Any]) -> None:
+        self.schema = schema
+        self._cols: dict[str, Any] = {}
+        for name, dtype in schema.items():
+            if dtype.is_integer():
+                self._cols[name] = array("q")
+            elif dtype.is_float():
+                self._cols[name] = array("d")
+            else:
+                self._cols[name] = []
+        self._n = 0
+
+    def __len__(self) -> int:
+        return self._n
+
+    def append(self, row: dict[str, Any]) -> None:
+        """Add one row; missing or ``None`` values are nulls."""
+        for name, col in self._cols.items():
+            value = row.get(name)
+            if isinstance(col, list):
+                col.append(value)
+            elif col.typecode == "q":
+                col.append(INT_NULL if value is None else int(value))
+            else:
+                col.append(math.nan if value is None else float(value))
+        self._n += 1
+
+    def frame(self) -> pl.DataFrame:
+        """The rows as a typed frame."""
+        data: dict[str, Any] = {}
+        for name, col in self._cols.items():
+            if isinstance(col, list):
+                data[name] = pl.Series(name, col, dtype=self.schema[name])
+            elif col.typecode == "q":
+                arr = np.frombuffer(col, dtype=np.int64) if len(col) else np.zeros(0, np.int64)
+                data[name] = pl.Series(name, arr).replace(INT_NULL, None).cast(self.schema[name])
+            else:
+                flt = np.frombuffer(col, dtype=np.float64) if len(col) else np.zeros(0)
+                data[name] = pl.Series(name, flt).fill_nan(None).cast(self.schema[name])
+        return pl.DataFrame(data)
