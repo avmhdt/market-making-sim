@@ -60,12 +60,20 @@ def glft_c2(gamma: float, sigma: float, A: float, k: float) -> float:
 
 
 def glft_asymptotic(
-    q: float, gamma: float, sigma: float, A: float, k: float
+    q: float, gamma: float, sigma: float, A: float, k: float, mu: float = 0.0
 ) -> tuple[float, float]:
-    """``(delta_bid, delta_ask)`` of the closed-form approximation (section 4)."""
+    """``(delta_bid, delta_ask)`` of the closed-form approximation (section 4).
+
+    With a drift ``mu`` (price per second; section 5.1, after Proposition 4) the quotes are
+    ``delta_b = c1 + (-mu/(gamma sigma^2) + q + 1/2) c2`` and
+    ``delta_a = c1 + (mu/(gamma sigma^2) - q + 1/2) c2``; ``mu = 0`` is the plain model.
+    """
     _check(gamma, sigma, A, k)
     c1, c2 = glft_c1(gamma, k), glft_c2(gamma, sigma, A, k)
-    return c1 + (q + 0.5) * c2, c1 - (q - 0.5) * c2
+    if mu == 0.0:
+        return c1 + (q + 0.5) * c2, c1 - (q - 0.5) * c2
+    drift = mu / (gamma * sigma**2)
+    return c1 + (-drift + q + 0.5) * c2, c1 + (drift - q + 0.5) * c2
 
 
 def with_fee(A: float, k: float, fee_per_unit: float) -> float:
@@ -73,15 +81,21 @@ def with_fee(A: float, k: float, fee_per_unit: float) -> float:
     return A * math.exp(-k * fee_per_unit)
 
 
-def glft_matrix(gamma: float, sigma: float, A: float, k: float, q_max: int) -> FloatArray:
-    """The ``(2Q+1) x (2Q+1)`` matrix ``M`` of Proposition 2, rows ordered ``-Q..Q``."""
+def glft_matrix(
+    gamma: float, sigma: float, A: float, k: float, q_max: int, mu: float = 0.0
+) -> FloatArray:
+    """The ``(2Q+1) x (2Q+1)`` matrix ``M`` of Proposition 2, rows ordered ``-Q..Q``.
+
+    With a drift ``mu`` the diagonal is ``alpha q^2 - beta q``, ``beta = k mu``
+    (Proposition 4's ODE system); ``mu = 0`` is Proposition 2.
+    """
     _check(gamma, sigma, A, k)
     if q_max < 1:
         raise ValueError("q_max must be >= 1")
     alpha = 0.5 * k * gamma * sigma**2
     eta = A * math.exp(-(1.0 + k / gamma) * math.log1p(gamma / k))
     q = np.arange(-q_max, q_max + 1, dtype=np.float64)
-    m = np.diag(alpha * q**2)
+    m = np.diag(alpha * q**2 - k * mu * q)
     off = np.full(2 * q_max, -eta)
     return m + np.diag(off, 1) + np.diag(off, -1)
 
@@ -132,15 +146,16 @@ def glft_exact(
     q_max: int,
     horizon_s: float,
     n_t: int = 1001,
+    mu: float = 0.0,
 ) -> GLFTExact:
-    """Solve Proposition 2 by eigendecomposition of the symmetric matrix ``M``.
+    """Solve Proposition 2 (Proposition 4 with drift ``mu``) by eigendecomposition of ``M``.
 
     ``v(t) = V exp(-L (T - t)) V' 1`` is evaluated in logs, factoring out the smallest
     eigenvalue, so long horizons neither overflow nor underflow.
     """
     if horizon_s <= 0 or n_t < 2:
         raise ValueError("need horizon_s > 0 and n_t >= 2")
-    m = glft_matrix(gamma, sigma, A, k, q_max)
+    m = glft_matrix(gamma, sigma, A, k, q_max, mu)
     lam, vec = np.linalg.eigh(m)
     proj = vec.T @ np.ones(m.shape[0])
     times = np.linspace(0.0, horizon_s, n_t)

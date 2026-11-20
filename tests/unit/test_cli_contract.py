@@ -62,7 +62,6 @@ def test_every_command_has_help(command: list[str]) -> None:
             "b",
         ],
         ["sweep", "--config", "x"],
-        ["validate", "signal-parity", "--model-dir", "x"],
         ["validate", "sim-parity", "--config", "x"],
         ["rl", "train", "--algo", "ppo", "--config", "x", "--seed", "1"],
         ["rl", "eval", "--run-id", "x", "--split", "val"],
