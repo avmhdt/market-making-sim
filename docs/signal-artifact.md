@@ -23,13 +23,13 @@ Each comparison is within 1e-9:
 
 A recorded day replays from its first live-verified checkpoint (docs/decisions.md M3-04), so the parity rows must come from after it, and after the longest feature window has filled. The replay decodes the recordings directly and writes no event cache, and it stops after the last parity row.
 
-Run it with `mms validate signal-parity --model-dir <folder>`, or with `MMS_SIGNAL_PARITY_DIR=<folder> pytest -m signal`. The results on the provisional artifact are in docs/decisions.md M4-08.
+Run it with `mms validate signal-parity --model-dir <folder>`, or with `MMS_SIGNAL_PARITY_DIR=<folder> pytest -m signal`. Results on the provisional artifacts: M4-08 (`0.0.0-pre.20261124`, predictions differ) and M4-09 (`0.0.0-pre.20261125`, bit-identical).
 
 ## Feature kinds as implemented here (D-03)
 
 crypto-lob-alpha computes its features offline and has no incremental API, so this repo re-implements each kind from the spec's definitions. Where its definitions are not yet published, the choices below are this repo's; the parity test will show any difference, which is then written up for crypto-lob-alpha (section 16: no edits to that repo from here).
 
-Quantities are in base units (lots × lot size), prices in ticks, times in the strategy's clock. Window sums are exact integers in lots, scaled after summing (M4-06). The strategy sees each event at its known-at time: with recorded feed latency, the running maximum of `ts_recv` per stream (M4-07). With `clock = "time"` a row is sampled at every multiple of `sample_grid_ms`; the row at `t` reflects every event with timestamp `<= t`, and time windows cover `(t − w, t]`. With `clock = "event"` a row follows every book update. Windows count their warm-up from the engine's first event; a row is ready once every feature is.
+Quantities are in base units (lots × lot size), prices in ticks, times in the strategy's clock. Window sums are exact integers in lots, scaled after summing (M4-06), and every kind uses the float64 operations crypto-lob-alpha pins in its `docs/model_artifact.md` ("Exact arithmetic"), so features agree bit for bit (M4-09). The strategy sees each event at its known-at time: with recorded feed latency, the running maximum of `ts_recv` per stream (M4-07). With `clock = "time"` a row is sampled at every multiple of `sample_grid_ms`; the row at `t` reflects every event with timestamp `<= t`, and time windows cover `(t − w, t]`. With `clock = "event"` a row follows every book update. Windows count their warm-up from the engine's first event; a row is ready once every feature is.
 
 | Kind | Definition |
 |---|---|
@@ -38,10 +38,10 @@ Quantities are in base units (lots × lot size), prices in ticks, times in the s
 | `integrated_ofi` | `Σ_l params.weights[l] · (Σ_window e_n(l))`, divided by `params.depth_norm` |
 | `queue_imbalance` | `(Σ bid_1..L − Σ ask_1..L) / (Σ bid_1..L + Σ ask_1..L)`, `L = max(levels)`; NaN when both sums are 0 |
 | `microprice` | Stoikov (2018) adjustment from `params.table`: rows `[imbalance_edge, adj]`, or `[spread_ticks, imbalance_edge, adj]`, with `I = bid_1 / (bid_1 + ask_1)` |
-| `weighted_mid` | `(I − 1/2) × spread` ticks |
+| `weighted_mid` | `(I − 1/2) × spread` ticks, computed as `float((qb − qa) · S) / float(2 (qb + qa))` in integer lots and ticks |
 | `trade_sign_imbalance` | `Σ side · w / Σ w` over the window, `w` = volume or 1 (`params.weight`) |
 | `spread` | Best ask minus best bid, ticks |
-| `realized_vol` | `sqrt(Σ Δmid²)` of the mid sampled every `params.sample_ms` (default 100) over the window, ticks |
+| `realized_vol` | `sqrt(Σ Δmid²)` of the mid sampled every `params.sample_ms` (default 100) over the window, ticks, computed as `sqrt(float(Σ d²)) / 2` with `d` the integer change of bid_1 + ask_1 |
 | `mid_changes` | Number of mid changes in the window |
 
 ## Fixture

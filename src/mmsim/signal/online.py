@@ -218,13 +218,17 @@ def _imbalance(book: BookView) -> float:
 
 
 class _WeightedMid(_Feature):
-    """Size-weighted mid minus the mid, in ticks: ``(I - 1/2) * spread``."""
+    """Size-weighted mid minus the mid, in ticks: ``(I - 1/2) * spread``, computed as the
+    producer pins it: ``float((qb - qa) * S) / float(2 (qb + qa))`` in integer lots and ticks."""
 
     def value(self, t: int, book: BookView | None) -> float | None:
         if book is None or not book.bid_ticks or not book.ask_ticks:
             return None
-        spread = book.ask_ticks[0] - book.bid_ticks[0]
-        return (_imbalance(book) - 0.5) * spread
+        spread = int(book.ask_ticks[0]) - int(book.bid_ticks[0])
+        qb, qa = int(book.bid_lots[0]), int(book.ask_lots[0])
+        if qb + qa == 0:
+            return 0.0
+        return float((qb - qa) * spread) / float(2 * (qb + qa))
 
 
 class _Microprice(_Feature):
@@ -316,7 +320,7 @@ class _MidHistory(_Feature):
             raise ArtifactError(f"{fdef.name}: {fdef.kind} needs a window in ms")
         self.window_ns = fdef.window * MS
         self.sample_ns = int(fdef.params.get("sample_ms", 100)) * MS
-        self.mids: deque[tuple[int, float]] = deque()
+        self.mids: deque[tuple[int, int]] = deque()  # (ts, bid_1 + ask_1 in ticks)
         self.first: int | None = None
 
     def on_start(self, ts: int) -> None:
@@ -326,7 +330,7 @@ class _MidHistory(_Feature):
     def on_book(self, ts: int, prev: BookView | None, cur: BookView) -> None:
         if not cur.bid_ticks or not cur.ask_ticks:
             return
-        mid = cur.mid_x2 / 2.0
+        mid = int(cur.mid_x2)
         if not self.mids or self.mids[-1][1] != mid:
             self.mids.append((ts, mid))
 
@@ -340,10 +344,11 @@ class _MidHistory(_Feature):
             return float(sum(1 for ts, _ in self.mids if lo < ts <= t))
         grid = np.arange(lo, t + 1, self.sample_ns, dtype=np.int64)
         times = np.array([m[0] for m in self.mids], dtype=np.int64)
-        vals = np.array([m[1] for m in self.mids])
+        vals = np.array([m[1] for m in self.mids], dtype=np.int64)
         idx = np.searchsorted(times, grid, side="right") - 1
         sampled = vals[np.clip(idx, 0, len(vals) - 1)]
-        return float(math.sqrt(float(np.sum(np.diff(sampled) ** 2))))
+        # sqrt(float(sum d^2)) / 2 with d the integer change of bid_1 + ask_1 (the producer's form)
+        return math.sqrt(float(int(np.sum(np.diff(sampled) ** 2)))) / 2
 
 
 _KINDS: dict[str, Callable[[FeatureDef, float, float], _Feature]] = {
