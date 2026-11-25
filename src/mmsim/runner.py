@@ -53,7 +53,7 @@ from mmsim.io.parquet import partition_dir, write_parquet
 from mmsim.io.runlog import ColumnLog, RunDir
 from mmsim.models.calibration import CalibratedParams, RollingCalibrator
 from mmsim.settings import Settings
-from mmsim.signal.artifact import SignalModel
+from mmsim.signal.artifact import ArtifactError, SignalModel
 from mmsim.signal.stub import ModelSignal, SignalProvider, StubSignal
 from mmsim.sim.latency import median_feed_latency_ns
 from mmsim.sim.protocol import MarketSimulator
@@ -782,6 +782,11 @@ def _execute(
             symbol=sessions[0].instrument.symbol,
             schema_path=repo_root / "docs" / "feature_spec.schema.json",
         )  # fmt: skip
+        if signal_model.metadata.provisional and not sig.allow_provisional:
+            raise ArtifactError(
+                f"{sig.model_dir} is a provisional artifact (integration only); set "
+                "strategy.signal.allow_provisional=true for a non-published test run"
+            )
     calib_frames: list[pl.DataFrame] = []
     horizons = list(cfg.analysis.markout_horizons_ms)
     headline = cfg.analysis.headline_horizon_ms

@@ -59,6 +59,30 @@ def test_signal_runs_end_to_end(
     assert quotes["signal"].drop_nulls().len() > 0
 
 
+def test_provisional_artifact_needs_opt_in(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    import shutil
+
+    from mmsim.signal.artifact import ArtifactError
+
+    art = tmp_path / "models" / ART.parent.name / ART.name
+    shutil.copytree(ART, art)
+    meta = json.loads((art / "metadata.json").read_text(encoding="utf-8"))
+    (art / "metadata.json").write_text(json.dumps({**meta, "provisional": True}), encoding="utf-8")
+    monkeypatch.setenv("MMS_RESULTS_DIR", str(tmp_path / "results"))
+    settings = Settings(
+        _env_file=None, mms_data_root=data_root, mms_results_dir=tmp_path / "results"
+    )  # type: ignore[call-arg]
+    overrides = ["strategy.signal.enabled=true", f"strategy.signal.model_dir={art.as_posix()}"]
+    cfg = load_config(FIXTURES / "configs" / "mini_day_glft.yaml", overrides, settings=settings)
+    with pytest.raises(ArtifactError, match="provisional"):
+        execute_run(cfg, settings=settings, repo_root=REPO)
+    result = check_parity(art, settings=Settings(_env_file=None, mms_data_root=data_root))  # type: ignore[call-arg]
+    assert result.provisional and result.passed
+
+
 @pytest.mark.signal
 def test_real_artifact_parity() -> None:
     """Point MMS_SIGNAL_PARITY_DIR at a crypto-lob-alpha artifact version folder."""

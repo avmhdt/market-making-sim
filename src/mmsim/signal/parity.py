@@ -35,15 +35,26 @@ TOL = 1e-9
 
 
 def replay_features(
-    spec: FeatureSpec, symbol: str, day: date, *, settings: Settings, repo_root: Path = Path()
+    spec: FeatureSpec,
+    symbol: str,
+    day: date,
+    *,
+    settings: Settings,
+    repo_root: Path = Path(),
+    until_ns: int | None = None,
 ) -> dict[int, list[float | None]]:
-    """Every sampled row of the engine over one recorded (or synthetic) day."""
+    """Every sampled row of the engine over one recorded (or synthetic) day.
+
+    The day is decoded straight from the recordings, without writing the event cache (a
+    recorded day's cache is about 1 GB). With ``until_ns`` the replay stops at the first event
+    after that time, once the row at ``until_ns`` has been sampled.
+    """
     source = "synthetic" if spec.venue == "synthetic" else "cla"
     feed = {"kind": "recorded"} if spec.timestamp == "ts_recv" else {"kind": "constant", "ns": 0}
     zero = {"kind": "constant", "ns": 0}
     cfg = MmsConfig.model_validate({
         "data": {"source": source, "venue": spec.venue, "symbols": [symbol], "start": day,
-                 "end": day},
+                 "end": day, "cache": False},
         "fees": {"tier": "retail"},
         "sim": {"latency": {"feed": feed, "order": zero, "ack": zero}},
     })  # fmt: skip
@@ -55,6 +66,8 @@ def replay_features(
     engine.record()
     while (step := sim.step()) is not None:
         engine.update(step)
+        if until_ns is not None and step.ts_local > until_ns:
+            break
     assert engine.rows is not None
     return dict(engine.rows)
 
@@ -75,6 +88,8 @@ class ParityResult:
     online_feature_max_diff: float
     online_feature_failures: int
     online_prediction_max_abs: float
+    online_prediction_failures: int = 0
+    provisional: bool = False
 
     @property
     def passed(self) -> bool:
@@ -104,13 +119,16 @@ def check_parity(
     loader = float(np.max(np.abs(model.predict_normalized(norm) - pred)))
     norm_diff = float(np.max(np.abs(model.normalize(raw) - norm)))
     missing = failures = 0
-    worst_name, worst, pred_diff = "", 0.0, 0.0
+    worst_name, worst, pred_diff, pred_failures = "", 0.0, 0.0, 0
     if online:
         ts_col = model.spec.timestamp
         ts = sample[ts_col].to_numpy()
         day = datetime.fromtimestamp(int(ts[0]) / 1e9, tz=UTC).date()
         symbol = str(sample["symbol"][0])
-        rows = replay_features(model.spec, symbol, day, settings=settings, repo_root=repo_root)
+        rows = replay_features(
+            model.spec, symbol, day, settings=settings, repo_root=repo_root,
+            until_ns=int(ts.max()),
+        )  # fmt: skip
         for i, t in enumerate(ts.tolist()):
             got = rows.get(int(t))
             if got is None or any(v is None for v in got):
@@ -125,9 +143,11 @@ def check_parity(
                     worst, worst_name = d, name
             p = model.predict(np.array(got, dtype=np.float64))
             pred_diff = max(pred_diff, abs(p - float(pred[i])))
+            pred_failures += abs(p - float(pred[i])) > TOL
     return ParityResult(
         rows=sample.height, loader_max_abs=loader, norm_max_abs=norm_diff,
         online_missing_rows=missing, online_worst_feature=worst_name,
         online_feature_max_diff=worst, online_feature_failures=failures,
-        online_prediction_max_abs=pred_diff,
+        online_prediction_max_abs=pred_diff, online_prediction_failures=pred_failures,
+        provisional=model.metadata.provisional,
     )  # fmt: skip

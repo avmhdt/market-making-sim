@@ -38,7 +38,7 @@
       "dtype": "float64",
       "normalization": {
         "method": "zscore_clip",
-        "mean": -0.020521446593776277,
+        "mean": -0.020521446593776287,
         "std": 0.810849100015986,
         "clip": 5.0
       }
@@ -145,7 +145,7 @@
     {
       "name": "tsi_vol_ms1000",
       "kind": "trade_sign_imbalance",
-      "levels": null,
+      "levels": [],
       "window": 1000,
       "window_unit": "ms",
       "params": {
@@ -155,7 +155,7 @@
       "dtype": "float64",
       "normalization": {
         "method": "zscore_clip",
-        "mean": 0.07408016243171828,
+        "mean": 0.07408016243171826,
         "std": 0.5965475995986826,
         "clip": 5.0
       }
@@ -163,7 +163,9 @@
     {
       "name": "rv_ms1000",
       "kind": "realized_vol",
-      "levels": null,
+      "levels": [
+        1
+      ],
       "window": 1000,
       "window_unit": "ms",
       "params": {

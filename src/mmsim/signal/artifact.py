@@ -128,6 +128,9 @@ class Metadata(_Model):
     validation_days: int | list[Any]
     target_unit: str
     metrics: dict[str, Any]
+    test_days: list[date] = []
+    provisional: bool = False
+    """A pre-release for integration only: no published result may use it."""
 
 
 def sha256_file(path: Path) -> str:
@@ -202,6 +205,13 @@ class SignalModel:
         if int(spec.spec_version.split(".")[0]) != SPEC_MAJOR:
             raise ArtifactError(f"spec_version {spec.spec_version}: need major {SPEC_MAJOR}")
         _schema_check(spec_raw, schema_path)
+        if (spec.model_name, spec.model_version) != (path.parent.name, path.name):
+            raise ArtifactError(
+                f"{path}: folder is not <model_name>/<model_version> "
+                f"({spec.model_name}/{spec.model_version})"
+            )
+        if meta.test_days and min(meta.test_days) <= meta.valid_end:
+            raise ArtifactError(f"test day {min(meta.test_days)} is not after valid_end")
         if sha256_file(path / "model.txt") != meta.model_sha256:
             raise ArtifactError("model.txt SHA-256 does not match metadata.model_sha256")
         for name in ("feature_spec.json", "parity_sample.csv"):

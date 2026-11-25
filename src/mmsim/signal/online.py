@@ -49,14 +49,18 @@ SUPPORTED_KINDS = frozenset(
 
 
 class _Window:
-    """Sum of values over the last ``w`` ms or the last ``n`` events."""
+    """Sum of integer values (lots, counts) over the last ``w`` ms or the last ``n`` events.
+
+    Values are Python ints, so the running sum is exact: a window that empties sums to exactly
+    0, and no floating-point drift builds up over a day. Callers scale by the lot size after
+    summing.
+    """
 
     def __init__(self, size: int, unit: str) -> None:
         self.size = size
         self.unit = unit
-        self.items: deque[tuple[int, float]] = deque()
-        self.total = 0.0
-        self.count = 0
+        self.items: deque[tuple[int, int]] = deque()
+        self.total = 0
         self.first_ts: int | None = None
 
     def start(self, ts: int) -> None:
@@ -64,19 +68,16 @@ class _Window:
         if self.first_ts is None:
             self.first_ts = ts
 
-    def add(self, ts: int, value: float) -> None:
+    def add(self, ts: int, value: int) -> None:
         if self.first_ts is None:
             self.first_ts = ts
         self.items.append((ts, value))
         self.total += value
-        self.count += 1
         if self.unit == "events" and len(self.items) > self.size:
             _, v = self.items.popleft()
             self.total -= v
-        if self.count % 4096 == 0:  # bound floating-point drift of the running sum
-            self.total = math.fsum(v for _, v in self.items)
 
-    def value_at(self, t: int) -> float | None:
+    def value_at(self, t: int) -> int | None:
         if self.unit == "ms":
             lo = t - self.size * MS
             while self.items and self.items[0][0] <= lo:
@@ -90,20 +91,20 @@ class _Window:
         return self.total
 
 
-def _ofi_level(prev: BookView, cur: BookView, level: int, lot: float) -> float | None:
-    """Cont, Kukanov and Stoikov (2014) ``e_n`` at a book level (0 = touch)."""
-    if (
-        len(prev.bid_ticks) <= level
-        or len(cur.bid_ticks) <= level
-        or len(prev.ask_ticks) <= level
-        or len(cur.ask_ticks) <= level
-    ):
-        return None
-    pb, qb = prev.bid_ticks[level], prev.bid_lots[level] * lot
-    cb, cqb = cur.bid_ticks[level], cur.bid_lots[level] * lot
-    pa, qa = prev.ask_ticks[level], prev.ask_lots[level] * lot
-    ca, cqa = cur.ask_ticks[level], cur.ask_lots[level] * lot
-    e = 0.0
+def _level(prices: tuple[int, ...], lots: tuple[int, ...], level: int) -> tuple[int, int]:
+    """Price and size at a level; a missing level is price -1 and size 0 (as the producer)."""
+    if len(prices) <= level:
+        return -1, 0
+    return prices[level], lots[level]
+
+
+def _ofi_level(prev: BookView, cur: BookView, level: int) -> int:
+    """Cont, Kukanov and Stoikov (2014) ``e_n`` at a book level (0 = touch), in lots."""
+    pb, qb = _level(prev.bid_ticks, prev.bid_lots, level)
+    cb, cqb = _level(cur.bid_ticks, cur.bid_lots, level)
+    pa, qa = _level(prev.ask_ticks, prev.ask_lots, level)
+    ca, cqa = _level(cur.ask_ticks, cur.ask_lots, level)
+    e = 0
     if cb >= pb:
         e += cqb
     if cb <= pb:
@@ -158,18 +159,16 @@ class _OFI(_Feature):
     def on_book(self, ts: int, prev: BookView | None, cur: BookView) -> None:
         if prev is None:
             return
-        e = _ofi_level(prev, cur, self.level, self.lot)
-        if e is not None:
-            self.win.add(ts, e)
+        self.win.add(ts, int(_ofi_level(prev, cur, self.level)))
 
     def value(self, t: int, book: BookView | None) -> float | None:
         v = self.win.value_at(t)
-        return None if v is None else v / self.norm
+        return None if v is None else v * self.lot / self.norm
 
 
 class _IntegratedOFI(_Feature):
-    """``sum_l w_l OFI_l`` over the window, ``params.weights`` per level (first PC), divided by
-    ``params.depth_norm`` when given."""
+    """``sum_l w_l (level-l OFI over the window)``, ``params.weights`` per level (first PC),
+    divided by ``params.depth_norm`` when given."""
 
     def __init__(self, fdef: FeatureDef, tick: float, lot: float) -> None:
         super().__init__(fdef, tick, lot)
@@ -177,27 +176,32 @@ class _IntegratedOFI(_Feature):
         if not weights:
             raise ArtifactError(f"{fdef.name}: integrated_ofi needs params.weights")
         self.weights = [float(w) for w in weights]
-        self.win = _window(fdef)
+        self.wins = [_window(fdef) for _ in self.weights]
         self.norm = float(fdef.params.get("depth_norm", 1.0)) or 1.0
+
+    def on_start(self, ts: int) -> None:
+        for win in self.wins:
+            win.start(ts)
 
     def on_book(self, ts: int, prev: BookView | None, cur: BookView) -> None:
         if prev is None:
             return
-        total = 0.0
-        for level, w in enumerate(self.weights):
-            e = _ofi_level(prev, cur, level, self.lot)
-            if e is None:
-                return
-            total += w * e
-        self.win.add(ts, total)
+        for level, win in enumerate(self.wins):
+            win.add(ts, int(_ofi_level(prev, cur, level)))
 
     def value(self, t: int, book: BookView | None) -> float | None:
-        v = self.win.value_at(t)
-        return None if v is None else v / self.norm
+        total = 0.0
+        for w, win in zip(self.weights, self.wins, strict=True):
+            s = win.value_at(t)
+            if s is None:
+                return None
+            total += w * (s * self.lot)
+        return total / self.norm
 
 
 class _QueueImbalance(_Feature):
-    """``(sum bid_qty_1..L - sum ask_qty_1..L) / (sum both)``, ``L = max(levels)``."""
+    """``(sum bid_qty_1..L - sum ask_qty_1..L) / (sum both)``, ``L = max(levels)``; missing
+    (NaN) when both sums are 0."""
 
     def value(self, t: int, book: BookView | None) -> float | None:
         if book is None or not book.bid_ticks or not book.ask_ticks:
@@ -205,7 +209,7 @@ class _QueueImbalance(_Feature):
         n = max(self.fdef.levels or [1])
         b = float(sum(book.bid_lots[:n]))
         a = float(sum(book.ask_lots[:n]))
-        return (b - a) / (b + a) if b + a > 0 else 0.0
+        return (b - a) / (b + a) if b + a > 0 else math.nan
 
 
 def _imbalance(book: BookView) -> float:
@@ -281,7 +285,7 @@ class _TradeSign(_Feature):
     def on_trade(self, ts: int, price_ticks: int, qty_lots: int, side: int) -> None:
         if side == 0:
             return
-        w = qty_lots * self.lot if self.volume else 1.0
+        w = int(qty_lots) if self.volume else 1  # lots: the lot size cancels in the ratio
         self.signed.add(ts, side * w)
         self.total.add(ts, w)
 

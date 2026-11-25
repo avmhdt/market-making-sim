@@ -2,10 +2,10 @@
   "git_sha": "0000000000000000000000000000000000000000",
   "created_utc": "2026-01-05T00:00:00Z",
   "lightgbm_version": "4.7.0",
-  "model_sha256": "90cbdb378960807e8cc1291028ed48805a669dd7e218424c964cba7c3f7e03a2",
+  "model_sha256": "3500da378fd2c058ab8737c46b4c4fb67f2e79b319792b642918714df6739b27",
   "files_sha256": {
-    "feature_spec.json": "e554d4155a66f671af5f4fcd9f9f079a5764b28b25ba14870eb27189c2f08f5a",
-    "parity_sample.csv": "352e2d86022aa9601f3d8dbdd29ce224a311752b698df7e59f79170f949ab731"
+    "feature_spec.json": "7c9f8f4c43b8b8b6dbaba443126e94357e2f1278e8cb92fbca9a57d86ef338bb",
+    "parity_sample.csv": "6b53eeae5c59f0665480efe135ce557847ad00b7320c8a1e9081a152da0ebb88"
   },
   "fold": 0,
   "train_start": "2026-01-03",

@@ -250,7 +250,10 @@ def validate_signal_parity(
     result = check_parity(model_dir, settings=settings)
     row = {"model": model_dir.parent.name, "version": model_dir.name, **asdict(result),
            "passed": result.passed}  # fmt: skip
-    write_table(pl.DataFrame([row]), settings.mms_reports_dir, "signal_parity", digits=4)
+    if result.provisional:
+        typer.echo("provisional artifact: integration check only, reports/ left unchanged")
+    else:
+        write_table(pl.DataFrame([row]), settings.mms_reports_dir, "signal_parity", digits=4)
     for key, value in row.items():
         typer.echo(f"{key:<28} {value}")
     raise typer.Exit(code=0 if result.passed else 1)

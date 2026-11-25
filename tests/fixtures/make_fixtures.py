@@ -33,10 +33,10 @@ SIGNAL_FEATURES = [
      "params": {"imbalance_buckets": 10, "max_spread_ticks": 4,
                 "table": [[i / 10, round((i / 10 + 0.05 - 0.5) * 0.8, 6)] for i in range(10)]},
      "definition": "g(I) lookup, ticks"},
-    {"name": "tsi_vol_ms1000", "kind": "trade_sign_imbalance", "levels": None, "window": 1000,
+    {"name": "tsi_vol_ms1000", "kind": "trade_sign_imbalance", "levels": [], "window": 1000,
      "window_unit": "ms", "params": {"weight": "volume"},
      "definition": "signed volume / volume over (t-1000ms, t]"},
-    {"name": "rv_ms1000", "kind": "realized_vol", "levels": None, "window": 1000,
+    {"name": "rv_ms1000", "kind": "realized_vol", "levels": [1], "window": 1000,
      "window_unit": "ms", "params": {"sample_ms": 100},
      "definition": "sqrt of summed squared 100 ms mid changes over the window, ticks"},
 ]  # fmt: skip

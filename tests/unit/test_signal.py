@@ -26,8 +26,8 @@ ART = FIXTURES / "signal_artifact" / "lob-synthetic-SYNUSDT-dmid_ticks_time_1000
 MS = 1_000_000
 
 
-def copy_art(tmp_path: Path) -> Path:
-    dst = tmp_path / "m" / "1.0.0"
+def copy_art(tmp_path: Path, name: str | None = None) -> Path:
+    dst = tmp_path / (name or ART.parent.name) / "1.0.0"
     shutil.copytree(ART, dst)
     return dst
 
@@ -52,6 +52,15 @@ def test_loader_rejects_contract_breaks(tmp_path: Path, monkeypatch: pytest.Monk
         SignalModel.load(ART, eval_start=date(2026, 1, 4))
     with pytest.raises(ArtifactError, match="symbol"):
         SignalModel.load(ART, symbol="BTCUSDT")
+    p = copy_art(tmp_path, "lob-other-name")
+    with pytest.raises(ArtifactError, match="model_name"):
+        SignalModel.load(p)
+    shutil.rmtree(p.parent)
+    p = copy_art(tmp_path)
+    rewrite_meta(p, test_days=["2026-01-01"])
+    with pytest.raises(ArtifactError, match="test day"):
+        SignalModel.load(p)
+    shutil.rmtree(p)
     p = copy_art(tmp_path)
     (p / "model.txt").write_bytes((p / "model.txt").read_bytes() + b"\n")
     with pytest.raises(ArtifactError, match=r"model\.txt SHA-256"):
