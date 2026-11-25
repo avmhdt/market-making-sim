@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from mmsim.models.avellaneda_stoikov import as_quotes
 from mmsim.models.glft import GLFTExact, glft_asymptotic, glft_exact, with_fee
 from mmsim.strategy.base import QuoteDecision, StrategyState
+from mmsim.strategy.signal_skew import drift_per_second, pull_sides, shift_distances
 
 __all__ = ["AnalyticPolicy", "SymmetricPolicy", "distances_to_ticks"]
 
@@ -51,11 +52,20 @@ class AnalyticPolicy:
     maker_bps: float = 0.0
     lot_size: float = 1.0
     name: str = ""
-    _exact_cache: dict[tuple[float, float, float], GLFTExact] = field(default_factory=dict)
+    signal_mode: str | None = None
+    """``None``, ``reservation_shift`` or ``glft_drift`` (FR-16)."""
+    signal_alpha: float = 0.5
+    signal_horizon_s: float = 1.0
+    pull_threshold_ticks: float | None = None
+    _exact_cache: dict[tuple[float, float, float, float], GLFTExact] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.family not in ("as", "glft", "glft_exact"):
             raise ValueError(f"unknown analytic family {self.family!r}")
+        if self.signal_mode not in (None, "reservation_shift", "glft_drift"):
+            raise ValueError(f"unknown signal mode {self.signal_mode!r}")
+        if self.signal_mode == "glft_drift" and self.family == "as":
+            raise ValueError("glft_drift needs a GLFT family")
         self.name = self.name or self.family
 
     def _tau(self, state: StrategyState) -> float:
@@ -65,11 +75,14 @@ class AnalyticPolicy:
             return max(state.t_remaining_s, 0.0)
         return self.horizon_s
 
-    def _exact(self, A: float, k: float, sigma: float) -> GLFTExact:
-        key = (A, k, sigma)
+    def _exact(self, A: float, k: float, sigma: float, mu: float = 0.0) -> GLFTExact:
+        key = (A, k, sigma, mu)
         sol = self._exact_cache.get(key)
         if sol is None:
-            sol = glft_exact(self.gamma, sigma, A, k, self.q_max_units, self.horizon_s, n_t=1001)
+            # A rolling policy reads t = 0 only, so two grid points suffice.
+            n_t = 2 if self.tau_mode == "rolling" else 1001
+            sol = glft_exact(self.gamma, sigma, A, k, self.q_max_units, self.horizon_s, n_t=n_t,
+                             mu=mu)  # fmt: skip
             self._exact_cache.clear()
             self._exact_cache[key] = sol
         return sol
@@ -88,16 +101,22 @@ class AnalyticPolicy:
         q = state.inventory_lots / self.quote_lots
         fee_u = self.maker_bps / 1e4 * mid * m
         sigma_u, k_u, mid_u = p.sigma * m, p.k / m, mid * m
+        y = state.signal_ticks if (self.signal_mode and state.signal_ticks is not None) else 0.0
+        mu_u = 0.0
+        if self.signal_mode == "glft_drift" and y:
+            mu_u = drift_per_second(y, self.tick_size, self.signal_horizon_s) * m
         if self.family == "as":
             bid_u, ask_u = as_quotes(mid_u, q, self._tau(state), self.gamma, sigma_u, k_u)
             d_bid: float | None = mid_u - bid_u + fee_u
             d_ask: float | None = ask_u - mid_u + fee_u
         elif self.family == "glft":
-            d_bid, d_ask = glft_asymptotic(q, self.gamma, sigma_u, with_fee(p.A, k_u, fee_u), k_u)
+            d_bid, d_ask = glft_asymptotic(
+                q, self.gamma, sigma_u, with_fee(p.A, k_u, fee_u), k_u, mu_u
+            )
             d_bid += fee_u
             d_ask += fee_u
         else:
-            sol = self._exact(with_fee(p.A, k_u, fee_u), k_u, sigma_u)
+            sol = self._exact(with_fee(p.A, k_u, fee_u), k_u, sigma_u, mu_u)
             t = 0.0 if self.tau_mode == "rolling" else self.horizon_s - self._tau(state)
             q_int = max(-self.q_max_units, min(self.q_max_units, round(q)))
             d_bid, d_ask = sol.deltas(min(max(t, 0.0), self.horizon_s), q_int)
@@ -105,6 +124,12 @@ class AnalyticPolicy:
             d_ask = None if d_ask is None else d_ask + fee_u
         d_bid = None if d_bid is None else d_bid / m
         d_ask = None if d_ask is None else d_ask / m
+        if self.signal_mode == "reservation_shift" and y:
+            d_bid, d_ask = shift_distances(d_bid, d_ask, y, self.signal_alpha, self.tick_size)
+        if self.signal_mode:
+            keep_bid, keep_ask = pull_sides(y, self.pull_threshold_ticks)
+            d_bid = d_bid if keep_bid else None
+            d_ask = d_ask if keep_ask else None
         bid, ask = distances_to_ticks(state, self.tick_size, d_bid, d_ask)
         return QuoteDecision(bid, ask, self.quote_lots, self.quote_lots)
 

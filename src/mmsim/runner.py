@@ -53,6 +53,8 @@ from mmsim.io.parquet import partition_dir, write_parquet
 from mmsim.io.runlog import ColumnLog, RunDir
 from mmsim.models.calibration import CalibratedParams, RollingCalibrator
 from mmsim.settings import Settings
+from mmsim.signal.artifact import ArtifactError, SignalModel
+from mmsim.signal.stub import ModelSignal, SignalProvider, StubSignal
 from mmsim.sim.latency import median_feed_latency_ns
 from mmsim.sim.protocol import MarketSimulator
 from mmsim.sim.registry import make_simulator
@@ -182,6 +184,7 @@ def run_session(
     requote_threshold_ticks: int,
     mids: list[tuple[int, int, int]],
     tau_finite: bool = False,
+    signal: SignalProvider | None = None,
 ) -> SessionLog:
     """Drive ``sim`` through one session.
 
@@ -224,6 +227,8 @@ def run_session(
         elif paused:
             paused = False
         params.update(step)
+        if signal is not None:
+            signal.update(step)
         for update in step.order_updates:
             _log_update(log, update, order_info)
         for fill in step.fills:
@@ -262,7 +267,7 @@ def run_session(
             inventory_lots=sim.position_lots(inst.symbol),
             q_max_lots=log.q_max_lots,
             params=current,
-            signal_ticks=None,
+            signal_ticks=None if signal is None else signal.signal(step.ts_local),
             t_remaining_s=remaining,
         )
         decision = policy.decide(state)
@@ -302,7 +307,7 @@ def run_session(
                     if decision.bid_ticks is not None and decision.ask_ticks is not None
                     else None
                 ),
-                "signal": None,
+                "signal": state.signal_ticks,
                 "A": current.A,
                 "k": current.k,
                 "sigma": current.sigma,
@@ -725,7 +730,10 @@ def execute_run(
     ``policy_factory(instrument, quote_lots)`` replaces the config's analytic policy (used
     by the validation suite's symmetric benchmark); ``extra_params`` join ``params_json``.
     """
-    family = family or cfg.strategy.family
+    st0 = cfg.strategy
+    family = family or (
+        "glft_signal" if st0.signal.enabled and st0.family in ("glft", "glft_exact") else st0.family
+    )
     results = results_dir or Path(cfg.run.results_dir)
     # The contract puts runs/<run_id>/ next to the log, so the log lives in the results dir.
     log_path = explog_path or (results / "trial_log.csv")
@@ -764,6 +772,21 @@ def _execute(
     if st.family == "rl":
         raise NotImplementedError("RL policies arrive in M6")
     sessions = build_sessions(cfg, settings, repo_root)
+    sig = st.signal
+    signal_model: SignalModel | None = None
+    if sig.enabled and sig.mode != "stub":
+        if not sig.model_dir:
+            raise ValueError("strategy.signal.model_dir is required unless mode is stub")
+        signal_model = SignalModel.load(
+            Path(sig.model_dir), eval_start=min(s.day for s in sessions),
+            symbol=sessions[0].instrument.symbol,
+            schema_path=repo_root / "docs" / "feature_spec.schema.json",
+        )  # fmt: skip
+        if signal_model.metadata.provisional and not sig.allow_provisional:
+            raise ArtifactError(
+                f"{sig.model_dir} is a provisional artifact (integration only); set "
+                "strategy.signal.allow_provisional=true for a non-published test run"
+            )
     calib_frames: list[pl.DataFrame] = []
     horizons = list(cfg.analysis.markout_horizons_ms)
     headline = cfg.analysis.headline_horizon_ms
@@ -789,7 +812,20 @@ def _execute(
         )  # fmt: skip
         inst = session.instrument
 
-        def factory(lots: int, inst: InstrumentSpec = inst) -> QuotePolicy:
+        signal: SignalProvider | None = None
+        if sig.enabled:
+            signal = (
+                StubSignal()
+                if signal_model is None
+                else ModelSignal(signal_model, inst.tick_size, sig.compute_latency_us * 1000)
+            )
+        mode = None
+        if sig.enabled:
+            mode = "glft_drift" if sig.mode == "glft_drift" else "reservation_shift"
+        horizon = 1.0 if signal is None else signal.horizon_s
+
+        def factory(lots: int, inst: InstrumentSpec = inst, mode: str | None = mode,
+                    horizon: float = horizon) -> QuotePolicy:  # fmt: skip
             if policy_factory is not None:
                 return policy_factory(inst, lots)
             return AnalyticPolicy(
@@ -797,6 +833,8 @@ def _execute(
                 q_max_units=st.q_max_units, horizon_s=st.horizon_s, tau_mode=st.tau_mode,
                 maker_bps=inst.maker_bps,
                 lot_size=inst.lot_size,
+                signal_mode=mode, signal_alpha=sig.alpha, signal_horizon_s=horizon,
+                pull_threshold_ticks=sig.pull_threshold_ticks,
             )  # fmt: skip
 
         provider: ParamsProvider
@@ -812,7 +850,7 @@ def _execute(
             quote_lots=None if st.quote_lots == "auto" else st.quote_lots,
             decision_interval_ns=st.decision_interval_ms * NS_PER_MS,
             requote_threshold_ticks=st.requote_threshold_ticks,
-            mids=mids, tau_finite=st.tau_mode == "finite",
+            mids=mids, tau_finite=st.tau_mode == "finite", signal=signal,
         )  # fmt: skip
         logs.append(log)
         quality.append(_session_quality(session, log))

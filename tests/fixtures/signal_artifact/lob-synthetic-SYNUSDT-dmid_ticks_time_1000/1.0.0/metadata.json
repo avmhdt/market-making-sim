@@ -1,0 +1,24 @@
+{
+  "git_sha": "0000000000000000000000000000000000000000",
+  "created_utc": "2026-01-05T00:00:00Z",
+  "lightgbm_version": "4.7.0",
+  "model_sha256": "3500da378fd2c058ab8737c46b4c4fb67f2e79b319792b642918714df6739b27",
+  "files_sha256": {
+    "feature_spec.json": "7c9f8f4c43b8b8b6dbaba443126e94357e2f1278e8cb92fbca9a57d86ef338bb",
+    "parity_sample.csv": "6b53eeae5c59f0665480efe135ce557847ad00b7320c8a1e9081a152da0ebb88"
+  },
+  "fold": 0,
+  "train_start": "2026-01-03",
+  "train_end": "2026-01-03",
+  "valid_start": "2026-01-04",
+  "valid_end": "2026-01-04",
+  "train_days": 1,
+  "validation_days": 1,
+  "target_unit": "ticks",
+  "metrics": {
+    "oos_r2": null,
+    "ic_spearman": null,
+    "n_test_days": 0,
+    "note": "synthetic test fixture; dates are placeholders"
+  }
+}

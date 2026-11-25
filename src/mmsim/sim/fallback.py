@@ -152,6 +152,7 @@ class FallbackSimulator:
         self._timer_ids = itertools.count(1)
         self._order_ids = itertools.count(1)
         self._visible_book = BookView(0, (), (), (), ())
+        self._known_at = {"book": 0, "trade": 0}
         self._position_seen = 0
         self._position_exch = 0
         self._mid_x2: int | None = None
@@ -290,8 +291,14 @@ class FallbackSimulator:
         if prio != _P_TIMER:
             self._nontimer += 1
 
-    def _visible_at(self, t_match: int, ts_exchange: int, ts_recv: int) -> int:
-        return max(t_match, ts_exchange + self._latency.feed_delay_ns(ts_exchange, ts_recv))
+    def _visible_at(self, stream: str, t_match: int, ts_exchange: int, ts_recv: int) -> int:
+        """When a market event becomes visible: its feed delay, never before the stream's
+        previous event (a feed arrives in order; recorded ``ts_recv`` steps back about 1 ms
+        when the host clock is adjusted, so the known-at time is its running maximum)."""
+        t = max(t_match, ts_exchange + self._latency.feed_delay_ns(ts_exchange, ts_recv))
+        t = max(t, self._known_at[stream])
+        self._known_at[stream] = t
+        return t
 
     def _market_event(self, event: MarketEvent) -> None:
         self.stats.market_events += 1
@@ -325,7 +332,7 @@ class FallbackSimulator:
         if self._book.crossed():
             self.stats.crossed_book_events += 1
             return
-        visible = self._visible_at(t, event.ts_exchange, event.ts_recv)
+        visible = self._visible_at("book", t, event.ts_exchange, event.ts_recv)
         self._push(visible, _P_VISIBLE, "book", self._book.view(visible, self._depth))
 
     def _book_spread(self) -> int:
@@ -334,7 +341,7 @@ class FallbackSimulator:
         return ask - bid
 
     def _trade(self, event: TradeRowEvent, t: int) -> None:
-        visible = self._visible_at(t, event.ts_exchange, event.ts_recv)
+        visible = self._visible_at("trade", t, event.ts_exchange, event.ts_recv)
         trade = TradeEvent(
             event.ts_exchange, visible, event.price_ticks, event.qty_lots, event.side
         )

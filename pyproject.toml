@@ -19,6 +19,8 @@ dependencies = [
     "structlog>=24.1",
     "matplotlib>=3.9",
     "httpx>=0.27",
+    "lightgbm>=4.5",
+    "jsonschema>=4.23",
 ]
 
 # Extras named by the spec (section 4). Their contents are filled in by the milestone that
@@ -53,6 +55,7 @@ dev = [
     "hypothesis>=6.100",
     "pre-commit>=4.0",
     "overfitlab>=0.1.1",
+    "types-jsonschema>=4",
 ]
 
 [tool.ruff]
@@ -64,6 +67,10 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "B", "UP", "N", "SIM", "RUF", "NPY"]
 # N803/N806: the papers' symbols (A, k, Q) are kept as written.
 ignore = ["N803", "N806", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# Hand-aligned literal tables in tests read better unwrapped.
+"tests/**" = ["E501"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["typer.Option", "typer.Argument"]

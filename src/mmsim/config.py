@@ -153,6 +153,9 @@ class SignalConfig(_Model):
     alpha: float = Field(default=0.5, ge=0, le=1)
     pull_threshold_ticks: float | None = None
     compute_latency_us: int = Field(default=200, ge=0)
+    allow_provisional: bool = False
+    """Accept a provisional (pre-release) artifact; for integration runs only, never for
+    published results."""
 
 
 class FixedParams(_Model):
